@@ -1,0 +1,162 @@
+---
+title: "internet_indicator_cleaning"
+format: html
+editor: visual
+---
+
+## Preparation
+
+```{r}
+library(haven)
+library(tidyverse)
+library(here)
+library(rnaturalearth)
+library(rnaturalearthdata)
+full_groundtruth <- read_csv(here("data/national/data_refresh/new_national_pipeline_files/files/groundtruth_offline_predictors_pop.csv"))
+```
+
+## Filtering
+
+```{r}
+internet_indicator <- full_groundtruth %>%
+  select(country.x, survey_start, survey_type, iso3, perc_used_internet_past12months_wght_age_15_to_49_men, perc_used_internet_past12months_wght_age_15_to_49_wom, perc_used_internet_past12months_men, perc_used_internet_past12months_wom, perc_used_internet_past12months_wght_fm_perc_ratio) %>%
+  filter(!(is.na(perc_used_internet_past12months_wght_age_15_to_49_men) & is.na(perc_used_internet_past12months_men)))
+
+internet_indicator <- internet_indicator %>%
+  mutate(perc_used_internet_past12months_wght_fm_perc_ratio = ifelse(survey_type == "itu", perc_used_internet_past12months_wom/perc_used_internet_past12months_men, perc_used_internet_past12months_wght_fm_perc_ratio))
+
+##priority list: pick the most recent dhs and mics, if no, choose itu, but the survey starting year should be later than 2014
+internet_indicator <- internet_indicator %>%
+  group_by(iso3) %>%
+  filter(survey_start == min(survey_start)) %>%
+  ungroup() %>%
+  filter(survey_start > 2013)
+
+
+internet_indicator_without_itu <- internet_indicator %>%
+  filter(survey_type != "itu")
+
+##noticing that we don't have fm ratio for itu data, let's add them back
+
+full_groundtruth <- full_groundtruth %>%
+  mutate(perc_used_internet_past12months_wght_fm_perc_ratio = ifelse(survey_type == "itu", perc_used_internet_past12months_wom/perc_used_internet_past12months_men, perc_used_internet_past12months_wght_fm_perc_ratio))
+
+write_csv(full_groundtruth, here("data/national/data_refresh/new_national_pipeline_files/files/groundtruth_offline_predictors_pop.csv"))
+```
+
+## Data coverage
+
+```{r}
+world_map <- ne_countries(scale = "medium", returnclass = "sf")
+
+world_map_with_internet <- world_map %>%
+  left_join(internet_indicator, by = c("iso_a3" = "iso3")) %>%
+  mutate(internet_ratio_without_itu = ifelse(survey_type == "itu", NA, perc_used_internet_past12months_wght_fm_perc_ratio))
+
+ggplot(data = world_map_with_internet) +
+  geom_sf(aes(fill = perc_used_internet_past12months_wght_fm_perc_ratio), 
+          data = world_map_with_internet[world_map_with_internet$iso_a3 != "ATA", ]) +
+  scale_fill_viridis_c(option = "viridis", name = "Female:Male Internet Usage Ratio") +
+  theme_minimal() +
+  labs(
+    title = "Data Coverage of Internet Indicators"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 14, hjust = 0.5),
+    plot.caption = element_text(size = 10, hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+
+
+ggplot(data = world_map_with_internet) +
+  geom_sf(aes(fill = internet_ratio_without_itu), 
+          data = world_map_with_internet[world_map_with_internet$iso_a3 != "ATA", ]) +
+  scale_fill_viridis_c(option = "viridis", name = "Female:Male Internet Usage Ratio") +
+  theme_minimal() +
+  labs(
+    title = "Data Coverage of Internet Indicators (Without ITU)"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 14, hjust = 0.5),
+    plot.caption = element_text(size = 10, hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+```
+
+## Output
+
+```{r}
+write_csv(internet_indicator, here("data/national/data_refresh/internet_indicator.csv"))
+```
+
+## no filter
+
+```{r}
+full_groundtruth <- read_csv(here("data/national/data_refresh/new_national_pipeline_files/files/groundtruth_offline_predictors.csv"))
+
+internet_indicator <- full_groundtruth %>%
+  select(country.x, survey_start, survey_type, iso3, perc_used_internet_past12months_wght_age_15_to_49_men, perc_used_internet_past12months_wght_age_15_to_49_wom, perc_used_internet_past12months_men, perc_used_internet_past12months_wom, perc_used_internet_past12months_wght_fm_perc_ratio) %>%
+  filter(!(is.na(perc_used_internet_past12months_wght_age_15_to_49_men) & is.na(perc_used_internet_past12months_men)))
+
+internet_indicator <- internet_indicator %>%
+  mutate(perc_used_internet_past12months_wght_fm_perc_ratio = ifelse(survey_type == "itu", perc_used_internet_past12months_wom/perc_used_internet_past12months_men, perc_used_internet_past12months_wght_fm_perc_ratio))
+
+internet_indicator <- internet_indicator %>%
+  arrange(country.x, survey_start) %>%
+  group_by(country.x, survey_start) %>%
+  mutate(n = n())
+
+internet_indicator <- internet_indicator %>%
+  mutate(perc_used_internet_past12months_men = ifelse(n == 2 & is.na(perc_used_internet_past12months_men), lead(perc_used_internet_past12months_men),perc_used_internet_past12months_men),
+         perc_used_internet_past12months_wom = ifelse(n == 2 & is.na(perc_used_internet_past12months_wom), lead(perc_used_internet_past12months_wom), perc_used_internet_past12months_wom)) %>%
+  filter(n != 2 | survey_type != "itu") %>%
+  mutate(perc_used_internet_past12months_men = ifelse(n == 2,(perc_used_internet_past12months_men + perc_used_internet_past12months_wght_age_15_to_49_men)/2, perc_used_internet_past12months_men),
+         perc_used_internet_past12months_wom = ifelse(n == 2, (perc_used_internet_past12months_wom + perc_used_internet_past12months_wght_age_15_to_49_wom)/2, perc_used_internet_past12months_wom)) %>%
+  mutate(perc_used_internet_past12months_men = ifelse(is.na(perc_used_internet_past12months_men), perc_used_internet_past12months_wght_age_15_to_49_men, perc_used_internet_past12months_men),
+         perc_used_internet_past12months_wom = ifelse(is.na(perc_used_internet_past12months_wom), perc_used_internet_past12months_wght_age_15_to_49_wom, perc_used_internet_past12months_wom)) %>%
+  select(-perc_used_internet_past12months_wght_age_15_to_49_men, -perc_used_internet_past12months_wght_age_15_to_49_wom, -n) %>%
+  mutate(perc_used_internet_past12months_wght_fm_perc_ratio = perc_used_internet_past12months_wom/perc_used_internet_past12months_men) %>%
+  mutate(survey_type = ifelse(iso3 == "CUB", "mics6+itu", survey_type)) %>%
+  mutate(survey_type = ifelse(iso3 == "ZMB", "dhs7+itu", survey_type))
+
+write_csv(internet_indicator, here("data/national/data_refresh/new_national_pipeline_files/files/internet_indicator_multipule_years.csv"))
+```
+
+## clean dataset for Casey
+
+```{r}
+full_groundtruth_out <- full_groundtruth %>%
+  select(1:48) %>%
+  filter(survey_type != "gsma") %>%
+  select(-contains("pop"), -contains("past3months")) %>%
+  mutate(internet_use_in_12_months_men = ifelse(is.na(perc_used_internet_past12months_wght_age_15_to_49_men), perc_used_internet_past12months_men, perc_used_internet_past12months_wght_age_15_to_49_men),
+         internet_use_in_12_months_wom = ifelse(is.na(perc_used_internet_past12months_wght_age_15_to_49_wom), perc_used_internet_past12months_wom, perc_used_internet_past12months_wght_age_15_to_49_wom),
+         owns_mobile_phone_men = ifelse(is.na(perc_owns_mobile_telephone_wght_age_15_to_49_men), perc_owns_mobile_telephone_wght_men, perc_owns_mobile_telephone_wght_age_15_to_49_men),
+         owns_mobile_phone_wom = ifelse(is.na(perc_owns_mobile_telephone_wght_age_15_to_49_wom), perc_owns_mobile_telephone_wght_wom, perc_owns_mobile_telephone_wght_age_15_to_49_wom)) %>%
+  select(c(2:6), 10, 14, 16, c(36:40)) %>%
+  mutate(used_internet_past12months_fm_perc_ratio = internet_use_in_12_months_wom/internet_use_in_12_months_men,
+         owns_mobile_phone_fm_perc_ratio = owns_mobile_phone_wom/owns_mobile_phone_men)
+
+
+write_csv(full_groundtruth_out, here("data/national/data_refresh/new_national_pipeline_files/files/internet_mobile_indicator_clean.csv"))
+```

@@ -1,0 +1,24 @@
+.DS_Store
+**/.ipynb_checkpoints
+**/__pycache__
+.idea/
+.Rproj.user
+.Rhistory
+
+# data/ and the generated outputs/ subdirs are symlinks into shared Dropbox (doc/decisions.md D1)
+/data/raw
+/data/processed
+/data/external
+/outputs/results
+/outputs/models
+/outputs/graphs
+
+# machine-generated run logs (§2: no README, not committed)
+/logs/*
+!/logs/.gitkeep
+
+# quarto render artefacts
+**/*_files/
+**/figure-html/
+**/libs/
+*.html

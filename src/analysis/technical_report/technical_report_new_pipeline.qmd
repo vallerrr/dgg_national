@@ -1,0 +1,91 @@
+---
+title: "pipeline_report"
+format: html
+editor: visual
+---
+
+## Preparation
+
+```{r}
+library(tidyverse)
+library(here)
+library(cowplot)
+library(countrycode)
+
+national_old <- read_csv(here("data", "reports", "report_national_subnational_refresh", "national_2023-12_2024-11.csv"))
+
+subnational_old <- read_csv(here("data", "reports", "report_national_subnational_refresh", "subnational_2023-12_2024-11.csv"))
+
+national_new <- read_csv(here("data", "pipeline", "result", "national", "2024-12.csv"))
+
+subnational_new <- read_csv(here("data", "pipeline", "result", "subnational", "subnational_predictions_with_uncertainty_202412.csv"))
+```
+
+## Average and join
+
+```{r}
+national_old_ave <- national_old %>%
+  group_by(country, gid_0, outcome) %>%
+  summarise(ave_predict = mean(predicted, na.rm = T))
+
+subnational_old_ave <- subnational_old %>%
+  group_by(country, gid_0, gid_1, outcome) %>%
+  summarise(ave_predict = mean(predicted, na.rm = T))
+
+national_compare <- national_old_ave %>%
+  left_join(national_new, by = c("gid_0", "outcome"))
+
+subnational_compare <- subnational_old_ave %>%
+  left_join(subnational_new, by = c("gid_0", "gid_1", "outcome")) %>%
+  mutate(region = countrycode(gid_0, origin = "iso3c", destination = "region"))
+
+subnational_new_na <- subnational_compare %>%
+  filter(is.na(predicted))
+
+##Somalia and Uganda are missing from new predictions due to lack of data
+```
+
+## Plot
+
+```{r}
+national_all <- national_compare %>%
+  ggplot(aes(x = ave_predict, y = predicted)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot(font_size = 16) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red",size = 0.5) +
+  facet_wrap(~outcome) +
+  labs(x = "National Indicators (12 months averaged)", y = "National Indicators (2024-12)")
+
+national_all
+
+ggsave(here("data", "reports", "report_national_subnational_refresh", "national_all.jpg"), width = 7, height = 5)
+
+subnational_all <- subnational_compare %>%
+  ggplot(aes(x = ave_predict, y = predicted)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot(font_size = 16) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red", size = 0.5) +
+  facet_wrap(~outcome) +
+  labs(x = "Subnational Indicators (12 months averaged)", y = "Subnational Indicators (2024-12)") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +  
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) 
+
+subnational_all
+
+ggsave(here("data", "reports", "report_national_subnational_refresh", "subnational_all.jpg"), width = 7, height = 5)
+
+internet_fm_ratio <- subnational_compare %>%
+  filter(outcome == "internet_fm_ratio") %>%
+  ggplot(aes(x = ave_predict, y = predicted)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot(font_size = 16) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red", size = 0.5) +
+  facet_wrap(~region, nrow = 3) +
+  labs(x = "Subnational Internet Ratio (12 months averaged)", y = "Subnational Internet Ratio (2024-12)") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +  
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) 
+
+internet_fm_ratio
+
+ggsave(here("data", "reports", "report_national_subnational_refresh", "subnational_internet_ratio.jpg"), width = 6, height = 8)
+```

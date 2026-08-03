@@ -1,0 +1,711 @@
+---
+title: "national_trend"
+format: html
+editor: visual
+---
+
+## Prepare
+
+```{r}
+library(tidyverse)
+library(here)
+library(countrycode)
+library(cowplot)
+library(readxl)
+```
+
+## Internet GGI Trend
+
+```{r}
+national <- read_csv(here("data/pipeline/result/national/aggregate_files.csv"))
+
+year_average_national <- national %>%
+  mutate(year = as.numeric(substr(date, 1, 4))) %>%
+  group_by(gid_0, year, outcome) %>%
+  summarise(pred = mean(predicted),
+            predicted_error = mean(predicted_error)) %>%
+  ungroup() %>%
+  mutate(region = countrycode(gid_0, origin = "iso3c", destination = "region"),
+         country = countrycode(gid_0, origin = "iso3c", destination = "country.name")) %>%
+  group_by(gid_0, outcome) %>%
+  arrange(gid_0, outcome, year) %>%
+  mutate(total_gain = pred[year == 2025] - pred[year == 2015],
+         annual_change = pred - dplyr::lag(pred, default = NA)) %>%
+  ungroup() %>%
+  group_by(gid_0) %>%
+  mutate(female_adoption_increase = pred[outcome == "internet_women" & year == 2025] - pred[outcome == "internet_women" & year == 2015]) %>%
+  ungroup()
+
+
+classification <- read_excel(here("data/national/data_refresh/World_Bank_Group_country_classifications_by_income_level.xlsx")) %>%
+  slice(1:218) %>%
+  select(Code, `Income group`)
+
+
+
+year_average_national <- year_average_national %>%
+  mutate(
+    subregion = case_when(
+      gid_0 %in% c("BDI", "COM", "DJI", "ERI", "ETH", "KEN", "MDG", "MWI", "MUS", "MOZ", 
+                  "REU", "RWA", "SYC", "SOM", "SSD", "TZA", "UGA", "ZMB", "ZWE") ~ "Eastern Africa",
+      
+      gid_0 %in% c("AGO", "CMR", "CAF", "TCD", "COD", "COG", "GNQ", "GAB", "STP") ~ "Central Africa",
+      
+      gid_0 %in% c("BEN", "BFA", "CPV", "CIV", "GMB", "GHA", "GIN", "GNB", "LBR", "MLI", 
+                  "MRT", "NER", "NGA", "SEN", "SLE", "TGO") ~ "Western Africa",
+      
+      gid_0 %in% c("BWA", "LSO", "NAM", "SWZ", "ZAF") ~ "Southern Africa",
+      
+      TRUE ~ "Other"
+    )
+  ) %>%
+  mutate(region2 = ifelse(region == "Sub-Saharan Africa", subregion, region))
+
+
+year_average_national <- year_average_national %>%
+  left_join(classification, by = c("gid_0" = "Code"))
+
+
+
+year_average_national %>%
+  filter(total_gain >= 0.3) %>%
+  filter(outcome == "internet_fm_ratio") %>%
+  ggplot(aes(x = factor(year), y = pred, group = country, color = country)) +
+  
+  # Ribbon for uncertainty bands
+  geom_ribbon(aes(ymin = pred - predicted_error, ymax = pred + predicted_error, fill = country), 
+              alpha = 0.2, color = NA) +  # alpha controls transparency, color = NA removes borders
+  
+  # Lines with distinct colors per country
+  geom_line(linewidth = 1) +
+  
+  # Points with the same shape for all countries
+  geom_point(shape = 16, size = 2) +  # Shape 16 = solid circle
+  
+  # Labels and Titles
+  labs(
+    x = "Year", 
+    y = "Prediction", 
+    title = "Countries with Closing Interent Gender Gap (≥ 0.3 Total Gain)",
+    color = "Country",
+    fill = "Country"
+  ) +
+
+  # Improve theme
+  theme_cowplot() +
+  theme(
+    legend.position = "bottom",  # Move legend below the plot
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+ggsave("internet_fm_ratio_closing_3.png", width = 7.5, height = 5.5)
+
+
+
+
+year_average_national %>%
+  filter(outcome == "internet_fm_ratio") %>%
+  filter(gid_0 %in% c("AFG", "ERI", "DJI", "TKM")) %>%
+  ggplot(aes(x = as.numeric(year), y = pred, group = country, color = country)) +
+  
+  # Ribbon for uncertainty bands
+  geom_ribbon(aes(ymin = pred - predicted_error, ymax = pred + predicted_error, fill = country), 
+              alpha = 0.2, color = NA) +
+  
+  # Lines with distinct colors per country
+  geom_line(linewidth = 1) +
+  
+  # Points with the same shape for all countries
+  geom_point(shape = 16, size = 2) +
+  
+  scale_x_continuous(breaks = seq(2015, 2025, by = 1)) +
+
+  # **Bold Rightward Arrows for Annotations**
+  geom_segment(aes(x = 2019, xend = 2018, y = 0.535, yend = 0.43, color = "Eritrea"), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9) +
+  geom_segment(aes(x = 2021, xend = 2021.9, y = 0.28, yend = 0.28, color = "Afghanistan"), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9) +
+  geom_segment(aes(x = 2022, xend = 2022, y = 0.75, yend = 0.83, color = "Turkmenistan"), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9) +
+  geom_segment(aes(x = 2021, xend = 2021.45, y = 0.61, yend = 0.63, color = "Djibouti"), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9) +
+
+  # Annotations with matching colors
+  geom_text(aes(x = 2016, y = 0.4, label = "Social media shutdown", color = "Eritrea"), 
+            hjust = 0, size = 4, fontface = "bold") +
+  geom_text(aes(x = 2022, y = 0.28, label = "Regime change", color = "Afghanistan"), 
+            hjust = 0, size = 4, fontface = "bold") +
+  geom_text(aes(x = 2021.5, y = 0.86, label = "Intensified internet control", color = "Turkmenistan"), 
+            hjust = 0, size = 4, fontface = "bold") +
+  geom_text(aes(x = 2021.5, y = 0.63, label = "Intensified internet control", color = "Djibouti"), 
+            hjust = 0, size = 4, fontface = "bold") +
+
+  # Improve theme
+  theme_cowplot() +
+  theme(
+    legend.position = "bottom",
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    x = "Year", 
+    y = "Prediction", 
+    title = "Countries with Widening Internet Gender Gap",
+    color = "Country",
+    fill = "Country"
+  )
+
+
+# Define custom hex colors (match ggplot default order or your plot)
+country_colors <- c(
+  "Afghanistan" = "#FF6F61",    # light coral
+  "Djibouti"    = "#91B541",    # olive green
+  "Eritrea"     = "#00BFC4",    # teal blue
+  "Turkmenistan"= "#C77CFF"     # lavender
+)
+
+widen_plot <- year_average_national %>%
+  filter(outcome == "internet_fm_ratio") %>%
+  filter(gid_0 %in% c("AFG", "ERI", "DJI", "TKM")) %>%
+  ggplot(aes(x = as.numeric(year), y = pred, group = country, color = country)) +
+  
+  # Ribbon for uncertainty bands
+  geom_ribbon(aes(ymin = pred - predicted_error, ymax = pred + predicted_error, fill = country), 
+              alpha = 0.2, color = NA) +
+  
+  # Lines with distinct colors per country (legend only here)
+  geom_line(linewidth = 1) +
+  geom_point(shape = 16, size = 2) +
+
+  scale_color_manual(values = country_colors) +
+  scale_fill_manual(values = country_colors) +
+  scale_x_continuous(breaks = seq(2015, 2025, by = 1)) +
+
+  # Annotations (use fixed colors so they don't enter the legend)
+  geom_segment(aes(x = 2019, xend = 2018, y = 0.535, yend = 0.43), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9, 
+               color = country_colors["Eritrea"]) +
+  geom_segment(aes(x = 2021, xend = 2021.9, y = 0.28, yend = 0.28), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9, 
+               color = country_colors["Afghanistan"]) +
+  geom_segment(aes(x = 2022, xend = 2022, y = 0.75, yend = 0.83), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9, 
+               color = country_colors["Turkmenistan"]) +
+  geom_segment(aes(x = 2021, xend = 2021.45, y = 0.61, yend = 0.63), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9, 
+               color = country_colors["Djibouti"]) +
+
+  geom_text(aes(x = 2016, y = 0.4, label = "Social media shutdown"), 
+            hjust = 0, size = 4, fontface = "bold", color = country_colors["Eritrea"]) +
+  geom_text(aes(x = 2022, y = 0.28, label = "Regime change"), 
+            hjust = 0, size = 4, fontface = "bold", color = country_colors["Afghanistan"]) +
+  geom_text(aes(x = 2021.5, y = 0.86, label = "Intensified internet control"), 
+            hjust = 0, size = 4, fontface = "bold", color = country_colors["Turkmenistan"]) +
+  geom_text(aes(x = 2021.5, y = 0.63, label = "Intensified internet control"), 
+            hjust = 0, size = 4, fontface = "bold", color = country_colors["Djibouti"]) +
+
+  # Theme and labels
+  theme_cowplot() +
+  theme(
+    legend.position = "bottom",
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    x = "Year", 
+    y = "Prediction", 
+    title = "Countries with Widening Internet Gender Gap",
+    color = "Country",
+    fill = "Country"
+  )
+
+
+ggsave("internet_fm_ratio_widening.png", width = 7.5, height = 5.5)
+
+
+
+# Compute the regional average trend for baseline
+region_select <- year_average_national %>%
+  group_by(gid_0, outcome) %>%
+  filter(outcome == "internet_fm_ratio") %>%
+  mutate(proportional_gain = total_gain[year == 2015]/pred[year == 2015]) %>%
+  filter(proportional_gain > 0.25) %>%
+  ungroup() %>%
+  select(region2) %>%
+  distinct() %>%
+  pull()
+
+regional_avg <- year_average_national %>%
+  filter(outcome == "internet_fm_ratio") %>%
+  filter(region2 %in% region_select) %>%
+  group_by(region2, year) %>%
+  summarise(mean_pred = mean(pred, na.rm = TRUE), .groups = "drop")
+
+year_average_national %>%
+  group_by(gid_0, outcome) %>%
+  mutate(proportional_gain = total_gain[year == 2015]/pred[year == 2015]) %>%
+  filter(proportional_gain > 0.25) %>%
+  ungroup() %>%
+  filter(outcome == "internet_fm_ratio") %>%
+  ggplot(aes(x = year, y = pred, group = country, color = country)) +  
+
+  # Ribbon for uncertainty bands
+  geom_ribbon(aes(ymin = pred - predicted_error, ymax = pred + predicted_error, fill = country), 
+              alpha = 0.2, color = NA) +  
+
+  # Lines with distinct colors per country
+  geom_line(linewidth = 1, alpha = 0.8) +
+  
+  # Points with the same shape for all countries
+  geom_point(shape = 16, size = 2, alpha = 0.8) +  
+  # **Add the Baseline Trend (Regional Average)**
+  geom_line(data = regional_avg, 
+            aes(x = year, y = mean_pred, group = region2, linetype = "Regional Average"), 
+            color = "#2a3439", linewidth = 1.2) +
+
+  # Labels and Titles
+  labs(
+    x = "Year", 
+    y = "Prediction", 
+    title = "Countries with Closing Internet Gender Gap (≥ 25% Increase)",
+    color = "Country",
+    fill = "Country"
+  ) +
+  
+  # Facet by region while ensuring legends are correctly positioned
+  facet_wrap(~region2) +
+
+  # Set x-axis to display every 2 years
+  scale_x_continuous(breaks = seq(min(year_average_national$year, na.rm = TRUE), 
+                                  max(year_average_national$year, na.rm = TRUE), 
+                                  by = 2)) +
+
+  # Improve theme
+  theme_cowplot() +
+  theme(
+    legend.position = "bottom",  
+    legend.box = "vertical",  
+    legend.margin = margin(t = 10),  
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_linetype_manual(values = c("Regional Average" = "solid"), guide = guide_legend(title = NULL))
+
+
+
+ggsave("internet_fm_ratio_closing_2.png", width = 10, height = 12)
+
+
+
+year_average_national %>%
+  filter(outcome == "internet_fm_ratio") %>%
+  filter(total_gain <= 0.1) %>%
+  group_by(gid_0) %>%
+  mutate(mean_pred = mean(pred)) %>%
+  filter(mean_pred < 0.8) %>%
+  filter(gid_0 != "YEM") %>%
+  ggplot(aes(x = factor(year), y = pred, group = country, color = country)) +
+  
+  # Ribbon for uncertainty bands
+  geom_ribbon(aes(ymin = pred - predicted_error, ymax = pred + predicted_error, fill = country), 
+              alpha = 0.2, color = NA) +  # alpha controls transparency, color = NA removes borders
+  
+  # Lines with distinct colors per country
+  geom_line(linewidth = 1) +
+  
+  # Points with the same shape for all countries
+  geom_point(shape = 16, size = 2) +  # Shape 16 = solid circle
+  
+  # Labels and Titles
+  labs(
+    x = "Year", 
+    y = "Prediction", 
+    title = "Countries with a Large and Stagnant Internet Gender Gap",
+    color = "Country",
+    fill = "Country"
+  ) +
+
+  # Improve theme
+  theme_cowplot() +
+  theme(
+    legend.position = "bottom",  # Move legend below the plot
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+ggsave("internet_fm_ratio_stagnant.png", width = 7.5, height = 5.5)
+```
+
+## Plot for paper: widening + best/worst
+
+```{r}
+national <- read_csv(here("data/pipeline/result/national/aggregate_files.csv"))
+
+year_average_national <- national %>%
+  mutate(year = as.numeric(substr(date, 1, 4))) %>%
+  group_by(gid_0, year, outcome) %>%
+  summarise(pred = mean(predicted),
+            predicted_error = mean(predicted_error)) %>%
+  ungroup() %>%
+  mutate(region = countrycode(gid_0, origin = "iso3c", destination = "region"),
+         country = countrycode(gid_0, origin = "iso3c", destination = "country.name")) %>%
+  group_by(gid_0, outcome) %>%
+  arrange(gid_0, outcome, year) %>%
+  mutate(total_gain = pred[year == 2025] - pred[year == 2015],
+         annual_change = pred - dplyr::lag(pred, default = NA)) %>%
+  ungroup() %>%
+  group_by(gid_0) %>%
+  mutate(female_adoption_increase = pred[outcome == "internet_women" & year == 2025] - pred[outcome == "internet_women" & year == 2015]) %>%
+  ungroup()
+
+# Define custom colors
+country_colors <- c(
+  "Afghanistan" = "#FF6F61",
+  "Djibouti"    = "#91B541",
+  "Eritrea"     = "#00BFC4",
+  "Turkmenistan"= "#C77CFF"
+)
+
+country_colors2 <- c(
+  "Bangladesh" = "#FDB813",   
+  "Turkmenistan" = "#C77CFF"     
+)
+
+# -------- Plot 1: Widening Gap --------
+widen_plot <- year_average_national %>%
+  filter(outcome == "internet_fm_ratio") %>%
+  filter(gid_0 %in% c("AFG", "ERI", "DJI", "TKM")) %>%
+  ggplot(aes(x = as.numeric(year), y = pred, group = country, color = country)) +
+  geom_ribbon(aes(ymin = pred - predicted_error, ymax = pred + predicted_error, fill = country), 
+              alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1) +
+  geom_point(shape = 16, size = 2) +
+  scale_color_manual(values = country_colors) +
+  scale_fill_manual(values = country_colors) +
+  scale_x_continuous(breaks = seq(2015, 2025, by = 1)) +
+
+  # Annotations
+  geom_segment(aes(x = 2019, xend = 2018, y = 0.535, yend = 0.43), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9, 
+               color = country_colors["Eritrea"]) +
+  geom_segment(aes(x = 2021, xend = 2021.9, y = 0.28, yend = 0.28), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9, 
+               color = country_colors["Afghanistan"]) +
+  geom_segment(aes(x = 2022, xend = 2022, y = 0.75, yend = 0.83), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9, 
+               color = country_colors["Turkmenistan"]) +
+  geom_segment(aes(x = 2021, xend = 2021.45, y = 0.61, yend = 0.63), 
+               arrow = arrow(length = unit(0.3, "cm")), linewidth = 0.9, 
+               color = country_colors["Djibouti"]) +
+  geom_text(aes(x = 2016, y = 0.4, label = "Social media shutdown"), 
+            hjust = 0, size = 4, fontface = "bold", color = country_colors["Eritrea"]) +
+  geom_text(aes(x = 2022, y = 0.28, label = "Regime change"), 
+            hjust = 0, size = 4, fontface = "bold", color = country_colors["Afghanistan"]) +
+  geom_text(aes(x = 2021.5, y = 0.86, label = "Intensified internet control"), 
+            hjust = 0, size = 4, fontface = "bold", color = country_colors["Turkmenistan"]) +
+  geom_text(aes(x = 2021.5, y = 0.63, label = "Intensified internet control"), 
+            hjust = 0, size = 4, fontface = "bold", color = country_colors["Djibouti"]) +
+  theme_cowplot() +
+  theme(
+    legend.position = "bottom",
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    x = "Year", 
+    y = "Prediction", 
+    title = "Countries with Widening Internet Gender Gap",
+    color = "Country",
+    fill = "Country"
+  )
+
+# -------- Plot 2: Best & Worst --------
+best_worst_plot <- year_average_national %>%
+  filter(outcome == "internet_fm_ratio") %>%
+  filter(total_gain == min(total_gain) | total_gain == max(total_gain)) %>%
+  ggplot(aes(x = factor(year), y = pred, group = country, color = country)) +
+  geom_ribbon(aes(ymin = pred - predicted_error, ymax = pred + predicted_error, fill = country), 
+              alpha = 0.2, color = NA) +  
+  geom_line(linewidth = 1) +
+  geom_point(shape = 16, size = 2) +
+  scale_color_manual(values = country_colors2) +
+  scale_fill_manual(values = country_colors2) +
+  labs(
+    x = "Year", 
+    y = "Prediction", 
+    title = "Best and Worst Performing Countries",
+    color = "Country",
+    fill = "Country"
+  ) +
+  theme_cowplot() +
+  theme(
+    legend.position = "bottom",
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  )
+
+# -------- Combine with cowplot --------
+combined_plot <- plot_grid(
+  widen_plot, 
+  best_worst_plot, 
+  labels = c("A", "B"),  # Optional panel labels
+  ncol = 2,              # Arrange vertically; use ncol = 2 for side-by-side
+  align = "h"            # Align vertically
+)
+
+
+ggsave("widen_best_worst.png", width = 13, height = 5)
+```
+
+## What happens to Eritrea
+
+```{r}
+fb <- read_csv(here("data/pipeline/pre_pipeline_result/fb_national.csv"))
+
+fb %>%
+  filter(iso3 == "ERI") %>%
+  group_by(year) %>%
+  summarise(average_mau = mean(fb_all, na.rm = T),
+            average_18plus_ratio = mean(fb_age_18_plus_ratio, na.rm = T)) %>%
+  pivot_longer(cols = -year, names_to = "type") %>%
+  ggplot(aes(x = year, y = value)) +
+  geom_line(linewidth = 1) +
+  geom_point(shape = 16, size = 2) +  
+  scale_x_continuous(limits = c(2015, 2024), breaks = seq(2015, 2024, by = 2)) +
+  scale_y_continuous(limits = c(0, NA)) +
+  facet_wrap(~type, scales = "free_y") +
+  theme_cowplot() +
+  labs(title = "FB indicator changes for Eritrea")
+
+ggsave("fb_eri.png", width = 7.5, height = 4.5)
+
+fb %>%
+  filter(iso3 == "DJI") %>%
+  group_by(year) %>%
+  summarise(average_mau = mean(fb_all, na.rm = T),
+            average_18plus_ratio = mean(fb_age_18_plus_ratio, na.rm = T)) %>%
+  pivot_longer(cols = -year, names_to = "type") %>%
+  ggplot(aes(x = year, y = value)) +
+  geom_line(linewidth = 1) +
+  geom_point(shape = 16, size = 2) +  
+  scale_x_continuous(limits = c(2015, 2024), breaks = seq(2015, 2024, by = 2)) +
+  scale_y_continuous(limits = c(0, NA)) +
+  facet_wrap(~type, scales = "free_y") +
+  theme_cowplot() +
+  labs(title = "FB indicator changes for Djibouti")
+
+ggsave("fb_dji.png", width = 7.5, height = 4.5)
+
+fb %>%
+  filter(iso3 == "TUR") %>%
+  group_by(year) %>%
+  summarise(average_mau = mean(fb_all, na.rm = T),
+            average_18plus_ratio = mean(fb_age_18_plus_ratio, na.rm = T)) %>%
+  pivot_longer(cols = -year, names_to = "type") %>%
+  ggplot(aes(x = year, y = value)) +
+  geom_line(linewidth = 1) +
+  geom_point(shape = 16, size = 2) +  
+  scale_x_continuous(limits = c(2015, 2024), breaks = seq(2015, 2024, by = 2)) +
+  scale_y_continuous(limits = c(0, NA)) +
+  facet_wrap(~type, scales = "free_y") +
+  theme_cowplot() +
+  labs(title = "FB indicator changes for Turkmenistan")
+
+ggsave("fb_tur.png", width = 7.5, height = 4.5)
+
+
+fb %>%
+  filter(iso3 == "AFG") %>%
+  group_by(year) %>%
+  summarise(average_mau = mean(fb_all, na.rm = T),
+            average_18plus_ratio = mean(fb_age_18_plus_ratio, na.rm = T)) %>%
+  pivot_longer(cols = -year, names_to = "type") %>%
+  ggplot(aes(x = year, y = value)) +
+  geom_line(linewidth = 1) +
+  geom_point(shape = 16, size = 2) +  
+  scale_x_continuous(limits = c(2015, 2024), breaks = seq(2015, 2024, by = 2)) +
+  scale_y_continuous(limits = c(0, NA)) +
+  facet_wrap(~type, scales = "free_y") +
+  theme_cowplot() +
+  labs(title = "FB indicator changes for Afghanistan")
+
+ggsave("fb_afg.png", width = 7.5, height = 4.5)
+
+offline <- read_csv(here("data/pipeline/file/national/national_offline_predictors.csv"))
+
+
+offline <- read_csv(here("data/pipeline/file/national/national_offline_predictors.csv"))
+
+offline_eri <- offline %>%
+  filter(year %in% c(2015:2024), iso3 == "AFG")
+
+```
+
+## Mobile
+
+```{r}
+national <- read_csv(here("data/pipeline/result/national/aggregate_files.csv"))
+
+year_average_national <- national %>%
+  mutate(year = as.numeric(substr(date, 1, 4))) %>%
+  group_by(gid_0, year, outcome) %>%
+  summarise(pred = mean(predicted),
+            predicted_error = mean(predicted_error)) %>%
+  ungroup() %>%
+  mutate(region = countrycode(gid_0, origin = "iso3c", destination = "region"),
+         country = countrycode(gid_0, origin = "iso3c", destination = "country.name")) %>%
+  group_by(gid_0, outcome) %>%
+  arrange(gid_0, outcome, year) %>%
+  mutate(total_gain = pred[year == 2025] - pred[year == 2015],
+         annual_change = pred - dplyr::lag(pred, default = NA)) %>%
+  ungroup() %>%
+  group_by(gid_0) %>%
+  mutate(female_adoption_increase = pred[outcome == "internet_women" & year == 2025] - pred[outcome == "internet_women" & year == 2015]) %>%
+  ungroup()
+
+
+classification <- read_excel(here("data/national/data_refresh/World_Bank_Group_country_classifications_by_income_level.xlsx")) %>%
+  slice(1:218) %>%
+  select(Code, `Income group`)
+
+
+
+year_average_national <- year_average_national %>%
+  mutate(
+    subregion = case_when(
+      gid_0 %in% c("BDI", "COM", "DJI", "ERI", "ETH", "KEN", "MDG", "MWI", "MUS", "MOZ", 
+                  "REU", "RWA", "SYC", "SOM", "SSD", "TZA", "UGA", "ZMB", "ZWE") ~ "Eastern Africa",
+      
+      gid_0 %in% c("AGO", "CMR", "CAF", "TCD", "COD", "COG", "GNQ", "GAB", "STP") ~ "Central Africa",
+      
+      gid_0 %in% c("BEN", "BFA", "CPV", "CIV", "GMB", "GHA", "GIN", "GNB", "LBR", "MLI", 
+                  "MRT", "NER", "NGA", "SEN", "SLE", "TGO") ~ "Western Africa",
+      
+      gid_0 %in% c("BWA", "LSO", "NAM", "SWZ", "ZAF") ~ "Southern Africa",
+      
+      TRUE ~ "Other"
+    )
+  ) %>%
+  mutate(region2 = ifelse(region == "Sub-Saharan Africa", subregion, region))
+
+
+year_average_national <- year_average_national %>%
+  left_join(classification, by = c("gid_0" = "Code"))
+
+
+year_average_national %>%
+  filter(total_gain >= 0.2) %>%
+  filter(outcome == "mobile_fm_ratio") %>%
+  ggplot(aes(x = factor(year), y = pred, group = country, color = country)) +
+  
+  # Ribbon for uncertainty bands
+  geom_ribbon(aes(ymin = pred - predicted_error, ymax = pred + predicted_error, fill = country), 
+              alpha = 0.2, color = NA) +  # alpha controls transparency, color = NA removes borders
+  
+  # Lines with distinct colors per country
+  geom_line(linewidth = 1) +
+  
+  # Points with the same shape for all countries
+  geom_point(shape = 16, size = 2) +  # Shape 16 = solid circle
+  
+  # Labels and Titles
+  labs(
+    x = "Year", 
+    y = "Prediction", 
+    title = "Countries with Closing Mobile Gender Gap (≥ 0.2 Total Gain)",
+    color = "Country",
+    fill = "Country"
+  ) +
+
+  # Improve theme
+  theme_cowplot() +
+  theme(
+    legend.position = "bottom",  # Move legend below the plot
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+ggsave("mobile_fm_ratio_closing_2.png", width = 7.5, height = 5.5)
+
+
+
+year_average_national %>%
+  filter(outcome == "mobile_fm_ratio") %>%
+  filter(gid_0 %in% c("AFG", "ERI", "DJI", "TKM")) %>%
+  ggplot(aes(x = factor(year), y = pred, group = country, color = country)) +
+  
+  # Ribbon for uncertainty bands
+  geom_ribbon(aes(ymin = pred - predicted_error, ymax = pred + predicted_error, fill = country), 
+              alpha = 0.2, color = NA) +  # alpha controls transparency, color = NA removes borders
+  
+  # Lines with distinct colors per country
+  geom_line(linewidth = 1) +
+  
+  # Points with the same shape for all countries
+  geom_point(shape = 16, size = 2) +  # Shape 16 = solid circle
+  
+  # Labels and Titles
+  labs(
+    x = "Year", 
+    y = "Prediction", 
+    title = "Countries with Widening Mobile Gender Gap",
+    color = "Country",
+    fill = "Country"
+  ) +
+
+  # Improve theme
+  theme_cowplot() +
+  theme(
+    legend.position = "bottom",  # Move legend below the plot
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+ggsave("mobile_fm_ratio_widening.png", width = 7.5, height = 5.5)
+
+
+
+year_average_national %>%
+  filter(outcome == "mobile_fm_ratio") %>%
+  filter(total_gain <= 0.1) %>%
+  group_by(gid_0) %>%
+  mutate(mean_pred = mean(pred)) %>%
+  filter(mean_pred < 0.8) %>%
+  filter(gid_0 != "YEM") %>%
+  ggplot(aes(x = factor(year), y = pred, group = country, color = country)) +
+  
+  # Ribbon for uncertainty bands
+  geom_ribbon(aes(ymin = pred - predicted_error, ymax = pred + predicted_error, fill = country), 
+              alpha = 0.2, color = NA) +  # alpha controls transparency, color = NA removes borders
+  
+  # Lines with distinct colors per country
+  geom_line(linewidth = 1) +
+  
+  # Points with the same shape for all countries
+  geom_point(shape = 16, size = 2) +  # Shape 16 = solid circle
+  
+  # Labels and Titles
+  labs(
+    x = "Year", 
+    y = "Prediction", 
+    title = "Countries with a Large and Stagnant Mobile Gender Gap",
+    color = "Country",
+    fill = "Country"
+  ) +
+  facet_wrap(~region) +
+  # Improve theme
+  theme_cowplot() +
+  theme(
+    legend.position = "bottom",  # Move legend below the plot
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+ggsave("mobile_fm_ratio_stagnant.png", width = 10, height = 8)
+```

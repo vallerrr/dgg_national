@@ -1,0 +1,1111 @@
+---
+title: "Technical Report Data Refresh"
+author: "Jiaxuan Li"
+format: html
+editor: visual
+---
+
+# Preparation
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(here)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(Metrics)
+library(readxl)
+library(cowplot)
+library(stargazer)
+library(knitr)
+library(texreg)
+library(ggpubr)
+##read groundtruth data
+
+full_groundtruth <- read_csv(here("data/national/data_refresh/new_national_pipeline_files/files/full_groundtruth.csv"))
+
+dhs <- full_groundtruth %>%
+  filter(survey_type %in% c("dhs7","dhs8", "continuous dhs7", "continuous dhs8"))
+
+mics <- full_groundtruth %>%
+  filter(survey_type == "mics6")
+
+itu <- full_groundtruth %>%
+  filter(survey_type == "itu")
+
+gsma <- full_groundtruth %>%
+  filter(survey_type == "gsma")
+```
+
+# Excluded country?
+
+```{r}
+
+included_country <- full_groundtruth %>%
+  select(country) %>%
+  distinct(country)
+
+data_female <- read_excel(here("data/national/data_refresh/population_data/WPP2022_POP_F01_3_POPULATION_SINGLE_AGE_FEMALE.xlsx"))
+
+data_female <- data_female[-c(1:11),]
+
+data_female <- data_female %>%
+  row_to_names(row_number = 1)
+
+all_country <- data_female %>%
+  filter(Type == "Country/Area") %>%
+  select(`Region, subregion, country or area *`) %>%
+  rename(country = `Region, subregion, country or area *`) %>%
+  distinct(country)
+
+not_included_country <- all_country %>%
+  anti_join(included_country)
+
+ISO_not_included_country <- data_female %>%
+  filter(Type == "Country/Area", Year == 2010) %>%
+  select(`Region, subregion, country or area *`,`ISO3 Alpha-code`) %>%
+  rename(country = `Region, subregion, country or area *`,
+         ISO3 = `ISO3 Alpha-code`) %>%
+  inner_join(not_included_country)
+
+ISO3_list <- ISO_not_included_country$ISO3
+
+world_map <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Create a variable to indicate selected countries
+world_map$included <- ifelse(world_map$iso_a3 %in% ISO3_list, "Not included", "Included")
+
+plot_not_included_country <- ggplot(data = world_map) +
+  geom_sf(aes(fill = included), color = "white") +
+  scale_fill_manual(values = c("Not included" = "lightblue", "Included" = "grey80")) +
+  theme_minimal() +
+  labs(title = "Countries not Included in the Dataset")
+
+dhs_recent_year <- dhs %>%
+  group_by(country) %>%
+  summarize(most_recent_year = max(survey_start, na.rm = TRUE)) %>%
+  ungroup()
+
+mics_recent_year <- mics %>%
+  group_by(country) %>%
+  summarize(most_recent_year = max(survey_start, na.rm = TRUE)) %>%
+  ungroup()
+
+itu_recent_year <- itu %>%
+  group_by(country) %>%
+  summarize(most_recent_year = max(survey_start, na.rm = TRUE)) %>%
+  ungroup()
+
+gsma_recent_year <- gsma %>%
+  group_by(country) %>%
+  summarize(most_recent_year = max(survey_start, na.rm = TRUE)) %>%
+  ungroup()
+
+ISO_included_country_dhs <- data_female %>%
+  filter(Type == "Country/Area", Year == 2010) %>%
+  select(`Region, subregion, country or area *`,`ISO3 Alpha-code`) %>%
+  rename(country = `Region, subregion, country or area *`,
+         iso_a3 = `ISO3 Alpha-code`) %>%
+  inner_join(dhs_recent_year)
+
+ISO_included_country_mics <- data_female %>%
+  filter(Type == "Country/Area", Year == 2010) %>%
+  select(`Region, subregion, country or area *`,`ISO3 Alpha-code`) %>%
+  rename(country = `Region, subregion, country or area *`,
+         iso_a3 = `ISO3 Alpha-code`) %>%
+  inner_join(mics_recent_year)
+
+ISO_included_country_itu <- data_female %>%
+  filter(Type == "Country/Area", Year == 2010) %>%
+  select(`Region, subregion, country or area *`,`ISO3 Alpha-code`) %>%
+  rename(country = `Region, subregion, country or area *`,
+         iso_a3 = `ISO3 Alpha-code`) %>%
+  inner_join(itu_recent_year)
+
+ISO_included_country_gsma <- data_female %>%
+  filter(Type == "Country/Area", Year == 2010) %>%
+  select(`Region, subregion, country or area *`,`ISO3 Alpha-code`) %>%
+  rename(country = `Region, subregion, country or area *`,
+         iso_a3 = `ISO3 Alpha-code`) %>%
+  inner_join(gsma_recent_year)
+
+world_map <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Create a variable to indicate selected countries
+world_map <- world_map %>%
+  full_join(ISO_included_country_dhs) %>%
+  mutate(most_recent_year_dhs = most_recent_year) %>%
+  select(-country, -most_recent_year) %>%
+  full_join(ISO_included_country_mics) %>%
+  mutate(most_recent_year_mics =  most_recent_year) %>%
+  select(-country, -most_recent_year) %>%
+  full_join(ISO_included_country_itu) %>%
+  mutate(most_recent_year_itu =  most_recent_year) %>%
+  select(-country, -most_recent_year) %>%
+  full_join(ISO_included_country_gsma) %>%
+  mutate(most_recent_year_gsma = most_recent_year) %>%
+  select(-country, -most_recent_year) %>%
+  filter(is.na(featurecla) == F)
+
+breaks_dhs <- 2015:2022
+
+plot_not_included_country_dhs <- ggplot(data = world_map) +
+  geom_sf(aes(fill = most_recent_year_dhs), data = world_map[world_map$iso_a3 != "ATA", ]) +
+  scale_fill_viridis_c(
+    na.value = "grey", 
+    option = "magma",  
+    breaks = breaks_dhs, 
+    labels = breaks_dhs, 
+    guide = guide_legend(
+      title = "Survey Year",
+      direction = "horizontal",
+      keywidth = 1,
+      keyheight = 1
+    )
+  ) +
+  theme_minimal() +
+  labs(title = "Countries Included in DHS") +
+  theme(legend.position = "bottom",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+
+breaks_mics <- min(world_map$most_recent_year_mics, na.rm = T):max(world_map$most_recent_year_mics, na.rm = T)
+
+plot_not_included_country_mics <- ggplot(data = world_map[world_map$iso_a3 != "ATA", ]) +
+  geom_sf(aes(fill = most_recent_year_mics)) +
+  scale_fill_viridis_c(
+    na.value = "grey", 
+    option = "magma",  
+    breaks = breaks_mics, 
+    labels = breaks_mics, 
+    guide = guide_legend(
+      title = "Survey Year",
+      direction = "horizontal",
+      keywidth = 1,
+      keyheight = 1
+    )
+  ) +
+  theme_minimal() +
+  labs(title = "Countries Included in MICS") +
+  theme(legend.position = "bottom",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+
+breaks_itu <- min(world_map$most_recent_year_itu, na.rm = T):max(world_map$most_recent_year_itu, na.rm = T)
+
+plot_not_included_country_itu <- ggplot(data = world_map[world_map$iso_a3 != "ATA", ]) +
+  geom_sf(aes(fill = most_recent_year_itu)) +
+  scale_fill_viridis_c(
+    na.value = "grey", 
+    option = "magma",  
+    breaks = breaks_itu, 
+    labels = breaks_itu, 
+    guide = guide_legend(
+      title = "Survey Year",
+      direction = "horizontal",
+      keywidth = 1,
+      keyheight = 1
+    )
+  ) +
+  theme_minimal() +
+  labs(title = "Countries Included in ITU") +
+  theme(legend.position = "bottom",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+
+breaks_gsma <- min(world_map$most_recent_year_gsma, na.rm = T):max(world_map$most_recent_year_gsma, na.rm = T)
+
+plot_not_included_country_gsma <- ggplot(data = world_map[world_map$iso_a3 != "ATA", ]) +
+  geom_sf(aes(fill = most_recent_year_gsma)) +
+  scale_fill_viridis_c(
+    na.value = "grey", 
+    option = "magma",  
+    breaks = breaks_gsma, 
+    labels = breaks_gsma, 
+    guide = guide_legend(
+      title = "Survey Year",
+      direction = "horizontal",
+      keywidth = 1,
+      keyheight = 1
+    )
+  ) +
+  theme_minimal() +
+  labs(title = "Countries Included in GSMA") +
+  theme(legend.position = "bottom",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+
+combined_map <- plot_grid(plot_not_included_country_dhs, plot_not_included_country_mics, plot_not_included_country_itu, plot_not_included_country_gsma, ncol = 1)
+```
+
+# 3 months and 12 months?
+
+```{r}
+dhs_male <- dhs %>%
+  select(survey_start, perc_ever_used_internet_wght_age_15_to_49_men, perc_used_internet_past12months_wght_age_15_to_49_men, country) %>%
+  rename(perc_ever_used_internet_wght_age_15_to_49 = perc_ever_used_internet_wght_age_15_to_49_men,
+         perc_used_internet_past12months_wght_age_15_to_49 = perc_used_internet_past12months_wght_age_15_to_49_men) %>%
+  mutate(gender = "Male") %>%
+  filter(country != "India") %>%
+  mutate(time = survey_start - min(survey_start))
+
+dhs_female <- dhs %>%
+  select(survey_start, perc_ever_used_internet_wght_age_15_to_49_wom, perc_used_internet_past12months_wght_age_15_to_49_wom, country) %>%
+  rename(perc_ever_used_internet_wght_age_15_to_49 = perc_ever_used_internet_wght_age_15_to_49_wom,
+         perc_used_internet_past12months_wght_age_15_to_49 = perc_used_internet_past12months_wght_age_15_to_49_wom) %>%
+  mutate(gender = "Female") %>%
+  filter(country != "India") %>%
+  mutate(time = survey_start - min(survey_start))
+
+dhs_long <- bind_rows(dhs_male, dhs_female)
+dhs_long$gender <- as.factor(dhs_long$gender)
+
+
+
+mics_male <- mics %>%
+  select(survey_start, perc_ever_used_internet_wght_age_15_to_49_men, perc_used_internet_past3months_wght_age_15_to_49_men, country) %>%
+  rename(perc_ever_used_internet_wght_age_15_to_49 = perc_ever_used_internet_wght_age_15_to_49_men,
+         perc_used_internet_past3months_wght_age_15_to_49 = perc_used_internet_past3months_wght_age_15_to_49_men) %>%
+  mutate(gender = "Male") %>%
+  mutate(time = survey_start - min(survey_start))
+
+mics_female <- mics %>%
+  select(survey_start, perc_ever_used_internet_wght_age_15_to_49_wom, perc_used_internet_past3months_wght_age_15_to_49_wom, country) %>%
+  rename(perc_ever_used_internet_wght_age_15_to_49 = perc_ever_used_internet_wght_age_15_to_49_wom,
+         perc_used_internet_past3months_wght_age_15_to_49 = perc_used_internet_past3months_wght_age_15_to_49_wom) %>%
+  mutate(gender = "Female") %>%
+  mutate(time = survey_start - min(survey_start))
+
+mics_long <- bind_rows(mics_male, mics_female)
+mics_long$gender <- as.factor(mics_long$gender)
+
+##fit models to study the relation between 12 months and ever use
+lm_dhs <- lm(perc_used_internet_past12months_wght_age_15_to_49 ~ perc_ever_used_internet_wght_age_15_to_49 + 0, data = dhs_long)
+
+summary(lm_dhs)
+
+lm_dhs_gender <- lm( perc_used_internet_past12months_wght_age_15_to_49 ~ perc_ever_used_internet_wght_age_15_to_49*gender + 0, data = dhs_long)
+
+summary(lm_dhs_gender)
+
+lm_dhs_time <- lm(perc_used_internet_past12months_wght_age_15_to_49 ~ perc_ever_used_internet_wght_age_15_to_49*time + 0, data = dhs_long)
+
+summary(lm_dhs_time)
+
+lm_dhs_timeX_gender <- lm(perc_used_internet_past12months_wght_age_15_to_49 ~ perc_ever_used_internet_wght_age_15_to_49*time +gender + 0, data = dhs_long)
+
+summary(lm_dhs_timeX_gender)
+
+lm_dhs_time_genderX <- lm(perc_used_internet_past12months_wght_age_15_to_49 ~ perc_ever_used_internet_wght_age_15_to_49*gender + time + 0, data = dhs_long)
+
+sum3 <- summary(lm_dhs_time_genderX)
+print(sum3, digits = 6)
+
+
+latex_code <- texreg(list(lm_dhs, lm_dhs_gender, lm_dhs_time, lm_dhs_time_genderX, lm_dhs_timeX_gender),
+                     stars = c(0.05, 0.01, 0.001),
+                     single.row = TRUE,
+                     digits = 5)
+
+# Print the LaTeX code
+cat(latex_code)
+
+
+cor_dhs <- dhs_long %>%
+  ggplot() +
+  geom_point(aes(x = perc_ever_used_internet_wght_age_15_to_49, y = perc_used_internet_past12months_wght_age_15_to_49, color = gender), alpha = 0.5) +
+  labs(x="Ever use Internet",y="Internet use in 12 months", title = "Correlation between Internet use in 12 months and ever use of Internet") +
+  theme_cowplot(font_size = 14) +
+  geom_abline(slope = 1, linetype = "dashed", color = "black", size = 0.5) +
+  coord_cartesian(xlim = c(0, NA), ylim = c(0, NA)) +
+  theme(legend.position = "bottom",
+        legend.justification = "center")
+
+cor_dhs
+
+##convert ever use in mics to use in 12 months
+new_data <- data.frame(
+  perc_ever_used_internet_wght_age_15_to_49 = mics_long$perc_ever_used_internet_wght_age_15_to_49,
+  gender = mics_long$gender
+)
+
+mics_long <- mics_long %>%
+  mutate(perc_used_internet_past12months_wght_age_15_to_49 = predict(lm_dhs_gender, newdata = new_data))
+
+dhs <- dhs %>%
+  mutate(perc_used_internet_past12months_wght_age_15_to_49_men = ifelse(country = "India", 0.994429 * perc_ever_used_internet_wght_age_15_to_49_men - 0.022710))
+
+cor_mics <- mics_long %>%
+  ggplot() +
+  geom_point(aes(x = perc_used_internet_past3months_wght_age_15_to_49, y = perc_used_internet_past12months_wght_age_15_to_49, color = gender), alpha = 0.8) +
+  labs(x="Internet use in 3 months (mics)",y="Predicted Internet use in 12 months (mics)") +
+  theme_cowplot(font_size = 12) +
+  geom_abline(slope = 1, linetype = "dashed", color = "black", size = 0.5) +
+  coord_cartesian(xlim = c(0, NA), ylim = c(0, NA)) +
+  theme(legend.position = "bottom",
+        legend.justification = "center") +
+  stat_cor(aes(x = perc_used_internet_past3months_wght_age_15_to_49, y = perc_used_internet_past12months_wght_age_15_to_49, label = ..r.label..), label.x = 0)
+
+cor_mics
+
+##if predicted use in 12 months < use in 3 months, make use in 12 months = use in 3 months
+mics_long <- mics_long %>%
+  mutate(perc_used_internet_past12months_wght_age_15_to_49 = ifelse(perc_used_internet_past12months_wght_age_15_to_49 < perc_used_internet_past3months_wght_age_15_to_49, perc_used_internet_past3months_wght_age_15_to_49, perc_used_internet_past12months_wght_age_15_to_49),
+         time = max(survey_start) - survey_start)
+
+
+##use 3 months to predict 12 months?
+lm_mics <- lm(perc_used_internet_past12months_wght_age_15_to_49 ~ perc_used_internet_past3months_wght_age_15_to_49 + 0, data = mics_long)
+
+summary(lm_mics)
+
+lm_mics_gender <- lm(perc_used_internet_past12months_wght_age_15_to_49 ~ perc_used_internet_past3months_wght_age_15_to_49*gender + 0, data = mics_long)
+
+summary(lm_mics_gender)
+
+lm_mics_time <- lm(perc_used_internet_past12months_wght_age_15_to_49 ~ perc_used_internet_past3months_wght_age_15_to_49*time + 0, data = mics_long)
+
+summary(lm_mics_time)
+
+lm_mics_timeX_gender <- lm(perc_used_internet_past12months_wght_age_15_to_49 ~ perc_used_internet_past3months_wght_age_15_to_49*time +gender + 0, data = mics_long)
+
+summary(lm_mics_timeX_gender)
+
+lm_mics_time_genderX <- lm(perc_used_internet_past12months_wght_age_15_to_49 ~ perc_used_internet_past3months_wght_age_15_to_49*gender + time + 0, data = mics_long)
+
+summary(lm_mics_time_genderX)
+
+latex_code_2 <- texreg(list(lm_mics, lm_mics_gender, lm_mics_time, lm_mics_time_genderX, lm_mics_timeX_gender),
+                     stars = c(0.05, 0.01, 0.001),
+                     single.row = TRUE,
+                     digits = 5)
+
+# Print the LaTeX code
+cat(latex_code_2)
+
+##use 3 months to predict ever use?
+lm_mics_2 <- lm(perc_ever_used_internet_wght_age_15_to_49 ~ perc_used_internet_past3months_wght_age_15_to_49 + 0, data = mics_long)
+
+lm_mics_gender_2 <- lm(perc_ever_used_internet_wght_age_15_to_49 ~ perc_used_internet_past3months_wght_age_15_to_49*gender + 0, data = mics_long)
+
+
+lm_mics_time_2 <- lm(perc_ever_used_internet_wght_age_15_to_49 ~ perc_used_internet_past3months_wght_age_15_to_49*time + 0, data = mics_long)
+
+
+lm_mics_timeX_gender_2 <- lm(perc_ever_used_internet_wght_age_15_to_49 ~ perc_used_internet_past3months_wght_age_15_to_49*time +gender + 0, data = mics_long)
+
+
+lm_mics_time_genderX_2 <- lm(perc_ever_used_internet_wght_age_15_to_49 ~ perc_used_internet_past3months_wght_age_15_to_49*gender + time + 0, data = mics_long)
+
+
+latex_code_3 <- texreg(list(lm_mics_2, lm_mics_gender_2, lm_mics_time_2, lm_mics_time_genderX_2, lm_mics_timeX_gender_2),
+                     stars = c(0.05, 0.01, 0.001),
+                     single.row = TRUE,
+                     digits = 5)
+
+# Print the LaTeX code
+cat(latex_code_3)
+
+
+##convert use in 3 months in itu to use in 12 months
+itu_male <- itu %>%
+  select(survey_start, perc_used_internet_past3months_men, country) %>%
+  rename(perc_used_internet_past3months = perc_used_internet_past3months_men) %>%
+  mutate(gender = "Male") %>%
+  mutate(time = survey_start - 2017)
+
+itu_female <- itu %>%
+  select(survey_start, perc_used_internet_past3months_wom, country) %>%
+  rename(perc_used_internet_past3months = perc_used_internet_past3months_wom) %>%
+  mutate(gender = "Female") %>%
+  mutate(time = survey_start - 2017)
+
+itu_long <- bind_rows(itu_male, itu_female)
+
+
+new_data_itu_3_12 <- data.frame(
+  perc_used_internet_past3months_wght_age_15_to_49 = itu_long$perc_used_internet_past3months,
+  gender = itu_long$gender,
+  time = itu_long$time
+)
+
+itu_long <- itu_long %>%
+  mutate(perc_used_internet_past12months_predict1 = predict(lm_mics_time_genderX, newdata = new_data_itu_3_12))
+
+
+new_data_itu_3_ever <- data.frame(
+  perc_used_internet_past3months_wght_age_15_to_49 = itu_long$perc_used_internet_past3months,
+  gender = itu_long$gender,
+  time = itu_long$time
+)
+
+itu_long <- itu_long %>%
+  mutate(perc_ever_used_internet = predict(lm_mics_time_genderX_2, newdata = new_data_itu_3_ever))
+
+new_data_itu_ever_12 <- data.frame(
+  perc_ever_used_internet_wght_age_15_to_49 = itu_long$perc_ever_used_internet,
+  gender = itu_long$gender)
+
+itu_long <- itu_long %>%
+  mutate(perc_used_internet_past12months_predict2 = predict(lm_dhs_gender, newdata = new_data_itu_ever_12))
+
+cor_itu_two_predicts <- itu_long %>%
+  ggplot() +
+  geom_point(aes(x = perc_used_internet_past12months_predict1, y = perc_used_internet_past12months_predict2, color = gender), alpha = 0.8) +
+  labs(x="Predicted Internet use in 12 months (prediction 1)",y="Predicted Internet use in 12 months (prediction 2)") +
+  theme_cowplot(font_size = 12) +
+  geom_abline(slope = 1, linetype = "dashed", color = "black", size = 0.5) +
+  coord_cartesian(xlim = c(0, NA), ylim = c(0, NA)) +
+  theme(legend.position = "bottom",
+        legend.justification = "center")
+
+cor_itu_two_predicts
+
+itu_long_withoutna <- itu_long %>%
+  filter(is.na(perc_used_internet_past12months_predict1) == F)
+
+mape(itu_long_withoutna$perc_used_internet_past12months_predict1, itu_long_withoutna$perc_used_internet_past12months_predict2)
+
+itu_long <- itu_long %>%
+  mutate(perc_used_internet_past12months = ifelse(perc_used_internet_past12months_predict1 > 1, 1, perc_used_internet_past12months_predict1)) %>%
+  select(country, survey_start, gender, perc_used_internet_past12months)
+
+itu_wide <- itu_long %>%
+  pivot_wider(names_from = gender, values_from = perc_used_internet_past12months, names_prefix = "perc_used_internet_past12months_") %>%
+  rename(perc_used_internet_past12months_men = perc_used_internet_past12months_Male,
+         perc_used_internet_past12months_wom = perc_used_internet_past12months_Female)
+
+itu <- itu %>%
+  full_join(itu_wide, by = c("country","survey_start"))
+
+mics_long <- mics_long %>%
+  select(survey_start,country,perc_used_internet_past12months_wght_age_15_to_49, gender)
+
+mics_wide <- mics_long %>%
+  pivot_wider(names_from = gender, values_from = perc_used_internet_past12months_wght_age_15_to_49, names_prefix = "perc_used_internet_past12months_wght_age_15_to_49_") %>%
+  rename(perc_used_internet_past12months_wght_age_15_to_49_men = perc_used_internet_past12months_wght_age_15_to_49_Male,
+         perc_used_internet_past12months_wght_age_15_to_49_wom = perc_used_internet_past12months_wght_age_15_to_49_Female)
+
+mics <- mics %>%
+  full_join(mics_wide, by = c("country","survey_start")) %>%
+  mutate(perc_used_internet_past12months_wght_age_15_to_49_men = perc_used_internet_past12months_wght_age_15_to_49_men.y,
+         perc_used_internet_past12months_wght_age_15_to_49_wom = perc_used_internet_past12months_wght_age_15_to_49_wom.y) %>%
+  select(-perc_used_internet_past12months_wght_age_15_to_49_men.x, -perc_used_internet_past12months_wght_age_15_to_49_wom.x, -perc_used_internet_past12months_wght_age_15_to_49_men.y, -perc_used_internet_past12months_wght_age_15_to_49_wom.y)
+
+full_groundtruth <- bind_rows(dhs,mics,itu,gsma)
+```
+
+# Correlation between different data source
+
+## Exact country-year
+
+```{r}
+
+
+dhs_itu <- dhs %>%
+  inner_join(itu, by = c("country", "survey_start"))
+
+dhs_itu$perc_owns_mobile_telephone_wght_age_15_to_49_men.x
+dhs_itu$perc_owns_mobile_telephone_wght_men.y
+
+dhs_itu$perc_owns_mobile_telephone_wght_age_15_to_49_wom.x
+dhs_itu$perc_owns_mobile_telephone_wght_wom.y
+
+mics_itu <- itu %>%
+  inner_join(mics, by = c("country", "survey_start"))
+
+mics_gsma <- mics %>%
+  inner_join(gsma, by = c("country", "survey_start"))
+
+itu_gsma <- itu %>%
+  inner_join(gsma, by = c("country","survey_start"))
+
+dhs_gsma <- dhs %>%
+  inner_join(gsma, by = c("country", "survey_start"))
+
+dhs_gsma_compare_male <- dhs_gsma %>%
+  select(perc_owns_mobile_telephone_wght_age_15_to_49_men.x, perc_owns_mobile_telephone_wght_age_15_to_49_men.y, country, survey_start) %>%
+  rename(perc_owns_mobile_telephone_gsma = perc_owns_mobile_telephone_wght_age_15_to_49_men.y,
+         perc_owns_mobile_telephone_dhs = perc_owns_mobile_telephone_wght_age_15_to_49_men.x) %>%
+  mutate(gender = "male")
+
+dhs_gsma_compare_female <- dhs_gsma %>%
+  select(perc_owns_mobile_telephone_wght_age_15_to_49_wom.x, perc_owns_mobile_telephone_wght_age_15_to_49_wom.y, country, survey_start) %>%
+  rename(perc_owns_mobile_telephone_gsma = perc_owns_mobile_telephone_wght_age_15_to_49_wom.y,
+         perc_owns_mobile_telephone_dhs = perc_owns_mobile_telephone_wght_age_15_to_49_wom.x) %>%
+  mutate(gender = "female")
+
+dhs_gsma_compare_long <- bind_rows(dhs_gsma_compare_female, dhs_gsma_compare_male) %>%
+  inner_join(world_map %>% select(admin, iso_a3), by = c("country" = "admin"))
+
+dhs_gsma_mape_male <- mape(dhs_gsma_compare_male$perc_owns_mobile_telephone_dhs, 
+     dhs_gsma_compare_male$perc_owns_mobile_telephone_gsma)
+
+dhs_gsma_mape_female <- mape(dhs_gsma_compare_female$perc_owns_mobile_telephone_dhs, 
+     dhs_gsma_compare_female$perc_owns_mobile_telephone_gsma)
+
+itu_compare_male <- itu_gsma %>%
+  select(perc_owns_mobile_telephone_wght_men.x, survey_type.x, country, survey_start) %>%
+  rename(perc_owns_mobile_telephone_itu = perc_owns_mobile_telephone_wght_men.x, survey_type = survey_type.x) %>%
+  mutate(gender = "male")
+
+itu_compare_female <- itu_gsma %>%
+  select(perc_owns_mobile_telephone_wght_wom.x, survey_type.x, country, survey_start) %>%
+  rename(perc_owns_mobile_telephone_itu = perc_owns_mobile_telephone_wght_wom.x, survey_type = survey_type.x) %>%
+  mutate(gender = "female")
+
+gsma_compare_male <- itu_gsma %>%
+  select(perc_owns_mobile_telephone_wght_men.y, survey_type.y, country, survey_start) %>%
+  rename(perc_owns_mobile_telephone_gsma = perc_owns_mobile_telephone_wght_men.y, survey_type = survey_type.y) %>%
+  mutate(gender = "male")
+
+gsma_compare_female <- itu_gsma %>%
+  select(perc_owns_mobile_telephone_wght_wom.y, survey_type.y, country, survey_start) %>%
+  rename(perc_owns_mobile_telephone_gsma = perc_owns_mobile_telephone_wght_wom.y, survey_type = survey_type.y) %>%
+  mutate(gender = "female")
+
+gsma_compare <- bind_rows(gsma_compare_female,gsma_compare_male)
+itu_compare <- bind_rows(itu_compare_female,itu_compare_male)
+
+gsma_itu_compare_long <- gsma_compare %>%
+  inner_join(itu_compare, by = c("country", "gender", "survey_start")) %>%
+  inner_join(world_map %>% select(admin, iso_a3), by = c("country" = "admin"))
+
+gsma_itu_compare_long <- na.omit(gsma_itu_compare_long, col = "perc_owns_mobile_telephone_itu")
+
+gsma_itu_compare_male <- gsma_itu_compare_long %>%
+  filter(gender == "male")
+
+gsma_itu_compare_female <- gsma_itu_compare_long %>%
+  filter(gender == "female")
+
+gsma_itu_mape_female <- mape(gsma_itu_compare_female$perc_owns_mobile_telephone_gsma,gsma_itu_compare_female$perc_owns_mobile_telephone_itu)
+
+gsma_itu_mape_male <- mape(gsma_compare_male$perc_owns_mobile_telephone_gsma,gsma_itu_compare_male$perc_owns_mobile_telephone_itu)
+
+
+cor_gsma_itu_mobile_use <- gsma_itu_compare_long %>%
+  ggplot() +
+  geom_text(aes(x = perc_owns_mobile_telephone_gsma, y = perc_owns_mobile_telephone_itu, color = gender, label = iso_a3), 
+            size = 2.5, check_overlap = FALSE) +
+  theme_cowplot(font_size = 14) +
+  geom_abline(slope = 1, linetype = "dashed", color = "black", size = 0.5) +
+  coord_cartesian(xlim = c(0, NA), ylim = c(0, NA)) +
+  labs(x = "Percentage of owning a mobile phone, GSMA", 
+       y = "Percentage of owning a mobile phone, ITU") +
+  theme(legend.position = "bottom",
+        legend.justification = "center",
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14)) +  
+  stat_cor(aes(x = perc_owns_mobile_telephone_gsma, y = perc_owns_mobile_telephone_itu, label = ..r.label..), label.x = 0)
+
+  
+  
+cor_gsma_itu_mobile_use
+
+table_mape_dhs_gsma <- data.frame(dhs_gsma_mape_female, dhs_gsma_mape_male)
+
+table_mape_dhs_gsma
+
+table_mape_gsma_itu <- data.frame(gsma_itu_mape_female, gsma_itu_mape_male)
+
+table_mape_gsma_itu
+
+
+cor_dhs_gsma_mobile_use <- dhs_gsma_compare_long %>%
+  ggplot() +
+  geom_text(aes(x = perc_owns_mobile_telephone_gsma, y = perc_owns_mobile_telephone_dhs, color = gender, label = iso_a3), size = 2.5, check_overlap = F) +
+  theme_cowplot(font_size = 14) +
+  geom_abline(slope = 1, linetype = "dashed", color = "black", size = 0.5) +
+  coord_cartesian(xlim = c(0, NA), ylim = c(0, NA)) +
+   theme(legend.position = "bottom",
+        legend.justification = "center",
+        legend.text = element_text(size = 14),  
+        legend.title = element_text(size = 14)) +  
+  labs(x = "Percentage of owning a mobile phone, GSMA", y = "Percentage of owning a mobile phone, DHS") +
+  stat_cor(aes(x = perc_owns_mobile_telephone_gsma, y = perc_owns_mobile_telephone_dhs, label = ..r.label..), label.x = 0)
+
+cor_dhs_gsma_mobile_use
+
+dhs_gsma_compare_long %>%
+  mutate(diff_gsma_dhs = perc_owns_mobile_telephone_gsma - perc_owns_mobile_telephone_dhs) %>%
+  summarize(mean_diff = mean(diff_gsma_dhs))
+
+gsma_itu_compare_long %>%
+  mutate(diff_gsma_itu = perc_owns_mobile_telephone_gsma - perc_owns_mobile_telephone_itu) %>%
+  summarise(mean_diff = mean(diff_gsma_itu))
+
+
+
+```
+
+## Approx. country-year
+
+```{r}
+dhs_itu_a <- dhs %>%
+  inner_join(itu, by = c("country")) %>%
+  select(country, survey_type.x, survey_start.x, perc_owns_mobile_telephone_wght_age_15_to_49_men.x, perc_owns_mobile_telephone_wght_age_15_to_49_wom.x, survey_type.y, survey_start.y, perc_owns_mobile_telephone_wght_men.y, perc_owns_mobile_telephone_wght_wom.y) %>%
+  filter(is.na(perc_owns_mobile_telephone_wght_wom.y) == F)
+
+dhs_itu_a_male <- dhs_itu_a %>%
+  select(country, survey_type.x, survey_start.x, perc_owns_mobile_telephone_wght_age_15_to_49_men.x,survey_type.y, survey_start.y, perc_owns_mobile_telephone_wght_men.y) %>%
+  rename(perc_owns_mobile_telephone_wght.x = perc_owns_mobile_telephone_wght_age_15_to_49_men.x,
+         perc_owns_mobile_telephone_wght.y = perc_owns_mobile_telephone_wght_men.y) %>%
+  mutate(Gender = "male")
+
+dhs_itu_a_female <- dhs_itu_a %>%
+  select(country, survey_type.x, survey_start.x, perc_owns_mobile_telephone_wght_age_15_to_49_wom.x,survey_type.y, survey_start.y, perc_owns_mobile_telephone_wght_wom.y) %>%
+  rename(perc_owns_mobile_telephone_wght.x = perc_owns_mobile_telephone_wght_age_15_to_49_wom.x,
+         perc_owns_mobile_telephone_wght.y = perc_owns_mobile_telephone_wght_wom.y) %>%
+  mutate(Gender = "female")
+
+dhs_itu_a_long <- bind_rows(dhs_itu_a_female, dhs_itu_a_male)
+
+dhs_itu_a_long <- dhs_itu_a_long %>%
+  mutate(survey_year_diff = survey_start.x - survey_start.y)
+
+
+
+
+palette <- c(
+    "-5" = "navy",            
+    "-3" = "royalblue",       
+    "-1" = "dodgerblue",  
+    "0"  = "skyblue",         
+    "1"  = "salmon",          
+    "2"  = "red",             
+    "3"  = "darkred"          
+)
+
+
+
+cor_dhs_itu_approx_mobile_use <- dhs_itu_a_long %>%
+   ggplot() +
+   geom_point(aes(x = perc_owns_mobile_telephone_wght.x, y = perc_owns_mobile_telephone_wght.y, 
+                  color = factor(survey_year_diff), shape = Gender), size = 2, alpha = 0.8) +
+   theme_cowplot(font_size = 14) +
+   scale_color_manual(name = "Difference of survey year (DHS-ITU)", values = palette) +  
+   scale_shape_discrete(name = "Gender") + 
+   geom_abline(slope = 1, linetype = "dashed", color = "black", size = 0.5) +
+   coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+   labs(x = "Percentage of owning a mobile phone (15-49), DHS", 
+        y = "Percentage of owning a mobile phone, ITU") +
+   guides(color = guide_legend(title = "Difference of survey year (DHS-ITU)"), 
+          shape = guide_legend(title = "Gender")) +
+   theme(legend.position = "bottom",
+         legend.box = "vertical", 
+         legend.direction = "horizontal", 
+         legend.text = element_text(size = 13)) +
+   stat_cor(aes(x = perc_owns_mobile_telephone_wght.x, y = perc_owns_mobile_telephone_wght.y, label = ..r.label..), label.x = 0, size = 5)
+
+cor_dhs_itu_approx_mobile_use
+
+dhs_itu_a_int <- dhs %>%
+  inner_join(itu, by = c("country")) %>%
+  select(country, survey_type.x, survey_start.x, perc_used_internet_past12months_wght_age_15_to_49_men.x, perc_used_internet_past12months_wght_age_15_to_49_wom.x, survey_type.y, survey_start.y, perc_used_internet_past3months_men.y, perc_used_internet_past3months_wom.y) %>%
+  filter(is.na(perc_used_internet_past3months_wom.y) == F & is.na(perc_used_internet_past12months_wght_age_15_to_49_men.x) == F)
+
+dhs_itu_a_int_male <- dhs_itu_a_int %>%
+  select(country, survey_type.x, survey_start.x, perc_used_internet_past12months_wght_age_15_to_49_men.x,survey_type.y, survey_start.y, perc_used_internet_past3months_men.y) %>%
+  rename(int_use.x = perc_used_internet_past12months_wght_age_15_to_49_men.x,
+         int_use.y = perc_used_internet_past3months_men.y) %>%
+  mutate(Gender = "male")
+
+dhs_itu_a_int_female <- dhs_itu_a_int %>%
+  select(country, survey_type.x, survey_start.x, perc_used_internet_past12months_wght_age_15_to_49_wom.x,survey_type.y, survey_start.y, perc_used_internet_past3months_wom.y) %>%
+  rename(int_use.x = perc_used_internet_past12months_wght_age_15_to_49_wom.x,
+         int_use.y = perc_used_internet_past3months_wom.y) %>%
+  mutate(Gender = "female")
+
+dhs_itu_a_int_long <- bind_rows(dhs_itu_a_int_female, dhs_itu_a_int_male)
+
+dhs_itu_a_int_long <- dhs_itu_a_int_long %>%
+  mutate(survey_year_diff = survey_start.x - survey_start.y) %>%
+  filter(survey_year_diff %in% c(-5:5)) %>%
+  filter(country != "India")
+
+palette <- c(
+    "-5" = "navy",
+    "-4" = "royalblue",
+    "-3" = "dodgerblue",
+    "-1" = "lightsteelblue",
+    "0"  = "cadetblue",  
+    "1"  = "gold",
+    "2"  = "darkorange",
+    "3"  = "red"
+)
+
+
+
+cor_dhs_itu_approx_int_use <- dhs_itu_a_int_long %>%
+  ggplot() +
+  geom_point(aes(x = int_use.x, y = int_use.y, 
+             color = factor(survey_year_diff), shape = Gender), size = 2, alpha = 0.8) +
+  theme_cowplot(font_size = 14) +
+  scale_color_manual(name = "Difference of survey year (DHS-ITU)", values = palette) +
+  scale_shape_discrete(name = "Gender") + 
+  geom_abline(slope = 1, linetype = "dashed", color = "black", size = 0.5) +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(x = "Percentage of ever used internet in past 12 months (15-49), DHS", 
+       y = "Percentage of ever used internet in past 3 months, ITU") +
+  guides(color = guide_legend(title = "Difference of survey year (DHS-ITU)"),
+         shape = guide_legend(title = "Gender", nrow = 1, byrow = TRUE)) +
+  theme(legend.position = "bottom",
+        legend.box = "vertical", 
+        legend.direction = "horizontal", 
+        legend.text = element_text(size = 13)) +
+  stat_cor(aes(x = int_use.x, y = int_use.y, label = ..r.label..), label.x = 0, size = 5)
+
+dhs_mics_a_int <- dhs %>%
+  inner_join(mics, by = c("country")) %>%
+  select(country, survey_type.x, survey_start.x, perc_used_internet_past12months_wght_age_15_to_49_men.x, perc_used_internet_past12months_wght_age_15_to_49_wom.x, survey_type.y, survey_start.y, perc_used_internet_past3months_wght_age_15_to_49_wom.y, perc_used_internet_past3months_wght_age_15_to_49_men.y)
+
+dhs_mics_a_int_male <- dhs_mics_a_int %>%
+  select(country, survey_type.x, survey_start.x, perc_used_internet_past12months_wght_age_15_to_49_men.x,survey_type.y, survey_start.y, perc_used_internet_past3months_wght_age_15_to_49_men.y) %>%
+  rename(int_use.x = perc_used_internet_past12months_wght_age_15_to_49_men.x,
+int_use.y = perc_used_internet_past3months_wght_age_15_to_49_men.y) %>%
+  mutate(Gender = "male")
+
+dhs_mics_a_int_female <- dhs_mics_a_int %>%
+  select(country, survey_type.x, survey_start.x, perc_used_internet_past12months_wght_age_15_to_49_wom.x,survey_type.y, survey_start.y, perc_used_internet_past3months_wght_age_15_to_49_wom.y) %>%
+  rename(int_use.x = perc_used_internet_past12months_wght_age_15_to_49_wom.x,
+int_use.y = perc_used_internet_past3months_wght_age_15_to_49_wom.y) %>%
+  mutate(Gender = "female")
+
+dhs_mics_a_int_long <- bind_rows(dhs_mics_a_int_female, dhs_mics_a_int_male)
+
+dhs_mics_a_int_long <- dhs_mics_a_int_long %>%
+  mutate(survey_year_diff = survey_start.x - survey_start.y)
+
+palette <- c(
+    "-4" = "darkblue",
+    "-3" = "dodgerblue",
+    "1"  = "gold",
+    "2"  = "orange",
+    "3"  = "red",
+    "5"  = "darkred"
+)
+
+
+
+cor_dhs_mics_approx_int_use <- dhs_mics_a_int_long %>%
+  ggplot() +
+  geom_point(aes(x = int_use.x, y = int_use.y, 
+             color = factor(survey_year_diff), shape = Gender), size = 2, alpha = 0.8) +
+  theme_cowplot(font_size = 14) +
+  scale_color_manual(name = "Difference of survey year (DHS-MICS)", values = palette) +
+  scale_shape_discrete(name = "Gender") + 
+  geom_abline(slope = 1, linetype = "dashed", color = "black", size = 0.5) +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(x = "Percentage of ever used internet in past 12 months (15-49), DHS", 
+       y = "Percentage of ever used internet in past 3 months (15-49), MICS") +
+  guides(color = guide_legend(title = "Difference of survey year (DHS-MICS)"),
+         shape = guide_legend(title = "Gender", nrow = 1, byrow = TRUE)) +
+  theme(legend.position = "bottom",
+        legend.box = "vertical", 
+        legend.direction = "horizontal", 
+        legend.text = element_text(size = 13)) +
+  stat_cor(aes(x = int_use.x, y = int_use.y, label = ..r.label..), label.x = 0, label.y = 0.85, size = 5)
+
+dhs_mics_a_mobile <- dhs %>%
+  inner_join(mics, by = c("country")) %>%
+  select(country, survey_type.x, survey_start.x, perc_owns_mobile_telephone_wght_age_15_to_49_men.x, perc_owns_mobile_telephone_wght_age_15_to_49_wom.x, survey_type.y, survey_start.y, perc_owns_mobile_telephone_wght_age_15_to_49_men.y, perc_owns_mobile_telephone_wght_age_15_to_49_wom.y)
+
+dhs_mics_a_mobile_male <- dhs_mics_a_mobile %>%
+  select(country, survey_type.x, survey_start.x, perc_owns_mobile_telephone_wght_age_15_to_49_men.x,survey_type.y, survey_start.y, perc_owns_mobile_telephone_wght_age_15_to_49_men.y) %>%
+  rename(mobile.x = perc_owns_mobile_telephone_wght_age_15_to_49_men.x,
+mobile.y = perc_owns_mobile_telephone_wght_age_15_to_49_men.y) %>%
+  mutate(Gender = "male")
+
+dhs_mics_a_mobile_female <- dhs_mics_a_mobile %>%
+  select(country, survey_type.x, survey_start.x, perc_owns_mobile_telephone_wght_age_15_to_49_wom.x,survey_type.y, survey_start.y, perc_owns_mobile_telephone_wght_age_15_to_49_wom.y) %>%
+  rename(mobile.x = perc_owns_mobile_telephone_wght_age_15_to_49_wom.x,
+mobile.y = perc_owns_mobile_telephone_wght_age_15_to_49_wom.y) %>%
+  mutate(Gender = "female")
+
+dhs_mics_a_mobile_long <- bind_rows(dhs_mics_a_mobile_female, dhs_mics_a_mobile_male)
+
+dhs_mics_a_mobile_long <- dhs_mics_a_mobile_long %>%
+  mutate(survey_year_diff = survey_start.x - survey_start.y)
+
+cor_dhs_mics_approx_mobile <- dhs_mics_a_mobile_long %>%
+  ggplot() +
+  geom_point(aes(x = mobile.x, y = mobile.y, 
+             color = factor(survey_year_diff), shape = Gender), size = 2, alpha = 0.8) +
+  theme_cowplot(font_size = 14) +
+   scale_color_manual(name = "Difference of survey year (DHS-MICS)", values = palette) +
+  scale_shape_discrete(name = "Gender") + 
+  geom_abline(slope = 1, linetype = "dashed", color = "black", size = 0.5) +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(x = "Percentage of owning a mobile phone (15-49), DHS", 
+       y = "Percentage of owning a mobile phone (15-49), MICS") +
+  guides(color = guide_legend(title = "Difference of survey year (DHS-MICS)"),
+         shape = guide_legend(title = "Gender", nrow = 1, byrow = TRUE)) +
+  theme(legend.position = "bottom",
+        legend.box = "vertical", 
+        legend.direction = "horizontal",
+        legend.text = element_text(size = 13)) +
+  stat_cor(aes(x = mobile.x, y = mobile.y, label = ..r.label..), label.x = 0, label.y = 0.85, size = 5)
+```
+
+# Country classification by income level
+
+```{r}
+classification <- read_excel(here("data/national/data_refresh/World_Bank_Group_country_classifications_by_income_level.xlsx"))
+
+classification <- classification %>%
+  filter(is.na(`Income group`) == F) %>%
+  select(Economy, Code, `Income group`) %>%
+  rename(country = Economy, ISO3 = Code)
+
+ISO_included_country <- data_female %>%
+  filter(Type == "Country/Area", Year == 2010) %>%
+  select(`Region, subregion, country or area *`,`ISO3 Alpha-code`) %>%
+  rename(country = `Region, subregion, country or area *`,
+         ISO3 = `ISO3 Alpha-code`) %>%
+  inner_join(full_groundtruth %>% select(country, survey_start))
+
+classification_included_country <- ISO_included_country %>%
+  left_join(classification, by = c("ISO3")) %>%
+  select(-country.y) %>%
+  arrange(country.x, survey_start)
+
+classification_n <- classification_included_country %>%
+  group_by(`Income group`) %>%
+  count()
+
+classification_country_n <- classification_included_country %>%
+  group_by(`Income group`, country.x) %>%
+  count() %>%
+  group_by(`Income group`) %>%
+  count()
+```
+
+# Trend
+
+```{r}
+full_groundtruth_trend <- full_groundtruth %>%
+  mutate(survey_type = ifelse(survey_type %in% c("dhs7", "dhs8", "continuous dhs7", "continuous dhs8"), "dhs", survey_type)) %>%
+  group_by(country, survey_type) %>%
+  mutate(n = n()) %>%
+  ungroup() %>%
+  filter(n > 1) %>%
+  arrange(country)
+
+plot_trend_gsma <- full_groundtruth_trend %>%
+  filter(survey_type == "gsma") %>%
+  ggplot() +
+  geom_line(aes(x = survey_start, y = perc_owns_mobile_telephone_wght_fm_perc_ratio, group = country), color = "blue", alpha = 0.3) +
+  geom_point(aes(x = survey_start, y = perc_owns_mobile_telephone_wght_fm_perc_ratio, group = country), color = "blue", alpha = 0.3) +
+  theme_cowplot() +
+  theme(legend.position = "none") +
+  labs(x = "survey start year", y = "female:male percentage of mobile ownership (GSMA)") +
+  geom_smooth(aes(x = survey_start, y = perc_owns_mobile_telephone_wght_fm_perc_ratio), color = "red")
+  
+
+plot_trend_gsma
+
+plot_trend_dhs_int <- full_groundtruth_trend %>%
+  filter(survey_type == "dhs") %>%
+  ggplot(aes(x = survey_start, y = perc_used_internet_past12months_wght_fm_perc_ratio, color = country)) +
+  geom_line() +
+  geom_point() +
+  theme_cowplot() +
+  theme(legend.position = "bottom") +
+  labs(x = "survey start year", y = "female:male percentage of internet use in 12 months (DHS)")
+
+plot_trend_dhs_int
+
+
+plot_trend_dhs_mobile <- full_groundtruth_trend %>%
+  filter(survey_type == "dhs") %>%
+  ggplot(aes(x = survey_start, y = perc_owns_mobile_telephone_wght_fm_perc_ratio, color = country)) +
+  geom_line() +
+  geom_point() +
+  theme_cowplot() +
+  theme(legend.position = "bottom") +
+  labs(x = "survey start year", y = "female:male percentage of mobile ownership (DHS)")
+
+plot_trend_dhs_mobile
+
+
+trend_gsma <- full_groundtruth %>%
+  filter(country %in% c("India", "Kenya", "Nigeria", "Pakistan")) %>%
+  filter(survey_type == "gsma")
+
+plot_trend_mobile_gsma <- trend_gsma %>%
+  ggplot(aes(x = survey_start, 
+             y = perc_owns_mobile_telephone_wght_fm_perc_ratio, 
+             shape = country, 
+             group = country, 
+             color = country)) +  
+  geom_point(size = 3) +  
+  geom_line(aes(linetype = country), size = 1, show.legend = FALSE) +  
+  scale_shape_manual(values = c(16, 17, 18, 19)) + 
+  scale_color_brewer(palette = "Dark2") +  
+  theme_minimal(base_size = 14) +  
+  theme(legend.position = "bottom",
+        legend.title = element_blank(), 
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(size = 14),
+        legend.key.size = unit(1, "lines")) +  
+  labs(x = "Survey Start Year", 
+       y = "Female:Male Ratio of Mobile Ownership (GSMA)",
+       color = "Country",  
+       shape = "Country") 
+
+plot_trend_mobile_gsma
+
+
+trend_dhs_mics_count <- dhs %>%
+  bind_rows(mics) %>%
+  group_by(country) %>%
+  count()
+
+trend_dhs_mics <- dhs %>%
+  mutate(survey_type = "dhs") %>%
+  bind_rows(mics %>% mutate(survey_type = "mics")) %>%
+  left_join(trend_dhs_mics_count) %>%
+  filter(n > 1) %>%
+  arrange(country) %>%
+  filter(country != "Nepal" & country != "Senegal" & country != "United Republic of Tanzania")
+
+plot_trend_dhs_mics <- trend_dhs_mics %>%
+  ggplot(aes(x = survey_start, 
+             y = perc_ever_used_internet_wght_fm_perc_ratio, 
+             shape = survey_type, 
+             group = country,  # Group by country
+             color = country)) +
+  geom_point(size = 3) +  
+  geom_line(aes(linetype = country), size = 1, show.legend = FALSE) +  # Hide line legend
+  scale_shape_manual(values = c(16, 17)) +  # Specify shapes
+  scale_color_brewer(palette = "Set1") +  # Color palette for countries
+  labs(
+    x = "Survey Start Year", 
+    y = "Female:Male Ratio of Ever using the Internet",
+    color = "Country",  # Legend title for color
+    shape = "Survey Type"  # Legend title for shape
+  ) +
+  guides(
+    color = guide_legend(title = "Country", order = 1),  # Ensure color legend is first
+    shape = guide_legend(title = "Survey Type", order = 2)  # Ensure shape legend is second
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom",
+        legend.title.align = 0.5,  # Center align the legend titles
+        legend.text = element_text(size = 14),  # Legend text size
+        legend.key.size = unit(1, "lines"),  # Legend key size
+        legend.box = "vertical")  # Arrange legends vertically
+
+plot_trend_dhs_mics
+
+plot_trend_dhs_mics_mobile <- trend_dhs_mics %>%
+  ggplot(aes(x = survey_start, 
+             y = perc_owns_mobile_telephone_wght_fm_perc_ratio, 
+             shape = survey_type, 
+             group = country,  # Group by country
+             color = country)) +
+  geom_point(size = 3) +  
+  geom_line(aes(linetype = country), size = 1, show.legend = FALSE) +  # Hide line legend
+  scale_shape_manual(values = c(16, 17)) +  # Specify shapes
+  scale_color_brewer(palette = "Set1") +  # Color palette for countries
+  labs(
+    x = "Survey Start Year", 
+    y = "Female:Male Ratio of Owning a Mobile Phone",
+    color = "Country",  # Legend title for color
+    shape = "Survey Type"  # Legend title for shape
+  ) +
+  guides(
+    color = guide_legend(title = "Country", order = 1),  # Ensure color legend is first
+    shape = guide_legend(title = "Survey Type", order = 2)  # Ensure shape legend is second
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom",
+        legend.title.align = 0.5,  # Center align the legend titles
+        legend.text = element_text(size = 14),  # Legend text size
+        legend.key.size = unit(1, "lines"),  # Legend key size
+        legend.box = "vertical")  # Arrange legends vertically
+
+
+min(itu$survey_start)
+itu %>%
+  distinct(country)
+```
+
+# Output
+
+```{r}
+ggsave("not_included_country.png",path=here("national/data_refresh/technical_report/figure"), plot = plot_not_included_country,width = 12,height = 6)
+
+ggsave("not_included_country_dhs.png",path=here("national/data_refresh/technical_report/figure"), plot = plot_not_included_country_dhs,width = 12,height = 6)
+
+ggsave("not_included_country_mics.png",path=here("national/data_refresh/technical_report/figure"), plot = plot_not_included_country_mics,width = 12,height = 6)
+
+ggsave("not_included_country_itu.png",path=here("national/data_refresh/technical_report/figure"), plot = plot_not_included_country_itu,width = 12,height = 6)
+
+ggsave("not_included_country_gsma.png",path=here("national/data_refresh/technical_report/figure"), plot = plot_not_included_country_gsma,width = 12,height = 6)
+
+ggsave("not_included_country_combined.png",path=here("national/data_refresh/technical_report/figure"), plot = combined_map,width = 12,height = 24)
+
+ggsave("cor_mics.png", path = here("national/data_refresh/technical_report/figure"), plot = cor_mics, width = 5.5,height = 4)
+
+ggsave("cor_gsma_itu_mobile_use.png", path = here("national/data_refresh/technical_report/figure"), plot = cor_gsma_itu_mobile_use, width = 6.5,height = 5)
+
+ggsave("cor_dhs_gsma_mobile_use.png", path = here("national/data_refresh/technical_report/figure"), plot = cor_dhs_gsma_mobile_use, width = 6.5,height = 5)
+
+ggsave("plot_trend_dhs_int.png", path = here("national/data_refresh/technical_report/figure"), plot = plot_trend_dhs_int, width = 6.5,height = 6.5)
+
+ggsave("plot_trend_dhs_mobile.png", path = here("national/data_refresh/technical_report/figure"), plot = plot_trend_dhs_mobile, width = 6.5,height = 6.5)
+
+ggsave("plot_trend_gsma.png", path = here("national/data_refresh/technical_report/figure"), plot = plot_trend_gsma)
+
+ggsave("plot_trend_mobile_gsma.png", path = here("national/data_refresh/technical_report/figure"), plot = plot_trend_mobile_gsma)
+
+ggsave("plot_trend_dhs_mics.png", path = here("national/data_refresh/technical_report/figure"), plot = plot_trend_dhs_mics)
+
+ggsave("plot_trend_dhs_mics_mobile.png", path = here("national/data_refresh/technical_report/figure"), plot = plot_trend_dhs_mics_mobile)
+
+ggsave("cor_itu_two_predicts.png", path = here("national/data_refresh/technical_report/figure"), plot = cor_itu_two_predicts)
+
+write.csv(classification_included_country, file = here("data/national/data_refresh/classification_included_country.csv"))
+
+ggsave("cor_dhs_itu_mobile_use_approx.png", path = here("national/data_refresh/technical_report/figure"), plot = cor_dhs_itu_approx_mobile_use, width = 7.5,height = 6.5)
+
+ggsave("cor_dhs_itu_int_use_approx.png", path = here("national/data_refresh/technical_report/figure"), plot = cor_dhs_itu_approx_int_use, width = 7.5,height = 6.5)
+
+ggsave("cor_dhs_mics_int_use_approx.png", path = here("national/data_refresh/technical_report/figure"), plot = cor_dhs_mics_approx_int_use)
+
+ggsave("cor_dhs_mics_mobile_approx.png", path = here("national/data_refresh/technical_report/figure"), plot = cor_dhs_mics_approx_mobile)
+
+write_csv(full_groundtruth, here("data/national/data_refresh/full_groundtruth.csv"))
+```
+
+# Deal with the case of India
+
+```{r}
+full_groundtruth <- full_groundtruth %>%
+  mutate(perc_used_internet_past12months_wght_age_15_to_49_men = ifelse(country == "India", 0.9944 * perc_ever_used_internet_wght_age_15_to_49_men - 0.022710, perc_used_internet_past12months_wght_age_15_to_49_men),
+         perc_used_internet_past12months_wght_age_15_to_49_wom = ifelse(country == "India", 0.971729 * perc_ever_used_internet_wght_age_15_to_49_wom - 0.010679, perc_used_internet_past12months_wght_age_15_to_49_wom))
+```

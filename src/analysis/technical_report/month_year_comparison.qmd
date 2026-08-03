@@ -1,0 +1,659 @@
+---
+title: "month_year_prediction_comparison"
+format: html
+editor: visual
+---
+
+## Preparation
+
+```{r}
+library(tidyverse)
+library(here)
+library(countrycode)
+library(cowplot)
+library(ggpubr)
+library(Metrics)
+
+
+file_year <- list.files(here("data/national/data_refresh/new_national_pipeline_files/results/pred_by_year_and_month"), recursive = T, full.names = T)
+
+data_year <- data.frame()
+
+for (file in file_year) {
+ new_data <- read_csv(file)
+ 
+ data_year <- bind_rows(data_year, new_data)
+}
+
+
+
+file_month <- list.files(here("data/national/data_refresh/new_national_pipeline_files/results/pred_by_year_and_month"), recursive = T, full.names = T)
+
+data_month <- data.frame()
+
+for (file in file_month) {
+ new_data <- read_csv(file)
+ 
+ data_month <- bind_rows(data_month, new_data)
+}
+
+data_month <- data_month %>%
+  filter(model_type == "combined")
+```
+
+## month annual average
+
+```{r}
+year_avergae_month <- data_month %>%
+  group_by(indicator, outcome_var, model_type, iso3, year) %>%
+  summarise(mean_pred = mean(pred)) %>%
+  arrange(indicator, outcome_var, model_type, iso3, year) %>%
+  mutate(annual_growth_rate_month = ifelse(year == lag(year) + 1, mean_pred / lag(mean_pred) - 1, NA)) %>%
+  filter(year > 2018) %>%
+  mutate(region = countrycode(iso3, "iso3c", "region"))
+
+year_avergae <- data_year %>%
+  arrange(indicator, outcome_var, model_type, iso3) %>%
+  mutate(annual_growth_rate = ifelse(year == lag(year) + 1, pred / lag(pred) - 1, NA)) %>%
+  filter(year > 2018) %>%
+  mutate(region = countrycode(iso3, "iso3c", "region"))
+
+compare <- year_avergae %>%
+  inner_join(year_avergae_month, by = c("indicator", "outcome_var", "model_type", "iso3", "year", "region")) %>%
+  mutate(interval = case_when(
+    year == 2020 ~ "2019-2020",
+    year == 2021 ~ "2020-2021",
+    year == 2022 ~ "2021-2022",
+    year == 2023 ~ "2022-2023",
+    year == 2024 ~ "2023-2024"
+  ))
+
+compare_diff <- compare %>%
+  filter(year == 2019 | year == 2024) %>%
+  mutate(diff_year = ifelse(lead(iso3) == iso3, lead(pred) - pred, NA),
+         diff_month = ifelse(lead(iso3) == iso3, lead(mean_pred) - pred, NA)) %>%
+  filter(is.na(diff_year) == F)
+```
+
+## Plot
+
+```{r}
+##comparison of pred vs mean_pred by year
+
+compare %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet GGI)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_prediction_by_year.jpg"), width = 10, height = 5)
+
+compare %>%
+  filter(outcome_var == "ggi", indicator == "mobile") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Mobile GGI)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "wom", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet Adoption Level Women)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "wom", indicator == "mobile") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Mobile Adoption Level Women)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "men", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet Adoption Level Men)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "men", indicator == "mobile") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Mobile Adoption Level Men)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet GGI)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(region))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_prediction_by_region.jpg"), width = 8, height = 6)
+
+compare %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = annual_growth_rate, y = annual_growth_rate_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Annual Growth Rate from Yearly Prediction (Internet GGI)", y = "Annual Grwoth Rate from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(is.na(interval) == F) %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = annual_growth_rate, y = annual_growth_rate_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  scale_x_continuous(limits = c(-0.1, 0.4)) +
+  scale_y_continuous(limits = c(-0.1, 0.4)) +
+  labs(x = "Annual Growth Rate from Yearly Prediction (Internet GGI)", y = "Annual Grwoth Rate from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(interval))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_growth_rate_by_year.jpg"), width = 9, height = 5)
+
+compare %>%
+  filter(is.na(interval) == F) %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = annual_growth_rate, y = annual_growth_rate_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  scale_x_continuous(limits = c(-0.1, 0.4)) +
+  scale_y_continuous(limits = c(-0.1, 0.4)) +
+  labs(x = "Annual Growth Rate from Yearly Prediction (Internet GGI)", y = "Annual Grwoth Rate from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(region))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_growth_rate_by_region.jpg"), width = 8, height = 6)
+
+
+compare_diff %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = diff_year, y = diff_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Five-Year Difference from Yearly Prediction (Internet GGI)", y = "Five-Year Difference from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  scale_x_continuous(limits = c(-0.1, 0.2)) +
+  scale_y_continuous(limits = c(-0.1, 0.2)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(region))
+
+ggsave(here("national/data_refresh/technical_report/figure/five_year_growth_by_region.jpg"), width = 8, height = 6)
+```
+
+# Aggregate Paired levels
+
+```{r}
+file_year <- list.files(here("data/national/data_refresh/new_national_pipeline_files/results/pred_by_year_data/aggregate_paired_levels/combined"), recursive = T, full.names = T)
+
+data_year <- data.frame()
+
+for (file in file_year) {
+ new_data <- read_csv(file)
+ 
+ data_year <- bind_rows(data_year, new_data)
+}
+
+
+
+file_month <- list.files(here("data/national/data_refresh/new_national_pipeline_files/results/pred_by_year_and_month/aggregate_paired_levels/combined"), recursive = T, full.names = T)
+
+data_month <- data.frame()
+
+for (file in file_month) {
+ new_data <- read_csv(file)
+ 
+ data_month <- bind_rows(data_month, new_data)
+}
+
+
+year_avergae_month <- data_month %>%
+  group_by(indicator, outcome_var, model_type, iso3, year) %>%
+  summarise(mean_pred = mean(pred)) %>%
+  arrange(indicator, outcome_var, model_type, iso3, year) %>%
+  mutate(annual_growth_rate_month = ifelse(year == lag(year) + 1, mean_pred / lag(mean_pred) - 1, NA)) %>%
+  filter(year > 2018) %>%
+  mutate(region = countrycode(iso3, "iso3c", "region"))
+
+year_avergae <- data_year %>%
+  arrange(indicator, outcome_var, model_type, iso3) %>%
+  mutate(annual_growth_rate = ifelse(year == lag(year) + 1, pred / lag(pred) - 1, NA)) %>%
+  filter(year > 2018) %>%
+  mutate(region = countrycode(iso3, "iso3c", "region"))
+
+compare <- year_avergae %>%
+  inner_join(year_avergae_month, by = c("indicator", "outcome_var", "model_type", "iso3", "year", "region")) %>%
+  mutate(interval = case_when(
+    year == 2020 ~ "2019-2020",
+    year == 2021 ~ "2020-2021",
+    year == 2022 ~ "2021-2022",
+    year == 2023 ~ "2022-2023",
+    year == 2024 ~ "2023-2024"
+  ))
+
+compare_diff <- compare %>%
+  filter(year == 2019 | year == 2024) %>%
+  mutate(diff_year = ifelse(lead(iso3) == iso3, lead(pred) - pred, NA),
+         diff_month = ifelse(lead(iso3) == iso3, lead(mean_pred) - pred, NA)) %>%
+  filter(is.na(diff_year) == F)
+```
+
+## Plot
+
+```{r}
+compare %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet GGI)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_prediction_by_year_aggregate.jpg"), width = 10, height = 5)
+
+compare %>%
+  filter(outcome_var == "ggi", indicator == "mobile") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Mobile GGI)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "wom", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet Adoption Level Women)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "wom", indicator == "mobile") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Mobile Adoption Level Women)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "men", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet Adoption Level Men)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "men", indicator == "mobile") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Mobile Adoption Level Men)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet GGI)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(region))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_prediction_by_region_aggregate.jpg"), width = 8, height = 6)
+
+compare %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = annual_growth_rate, y = annual_growth_rate_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Annual Growth Rate from Yearly Prediction (Internet GGI)", y = "Annual Grwoth Rate from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(is.na(interval) == F) %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = annual_growth_rate, y = annual_growth_rate_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  scale_x_continuous(limits = c(-0.1, 0.4)) +
+  scale_y_continuous(limits = c(-0.1, 0.4)) +
+  labs(x = "Annual Growth Rate from Yearly Prediction (Internet GGI)", y = "Annual Grwoth Rate from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(interval))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_growth_rate_by_year_aggregate.jpg"), width = 9, height = 5)
+
+compare %>%
+  filter(is.na(interval) == F) %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = annual_growth_rate, y = annual_growth_rate_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  scale_x_continuous(limits = c(-0.1, 0.4)) +
+  scale_y_continuous(limits = c(-0.1, 0.4)) +
+  labs(x = "Annual Growth Rate from Yearly Prediction (Internet GGI)", y = "Annual Grwoth Rate from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(region))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_growth_rate_by_region_aggregate.jpg"), width = 8, height = 6)
+
+
+compare_diff %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = diff_year, y = diff_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Five-Year Difference from Yearly Prediction (Internet GGI)", y = "Five-Year Difference from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  scale_x_continuous(limits = c(-0.1, 0.2)) +
+  scale_y_continuous(limits = c(-0.1, 0.2)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(region))
+
+ggsave(here("national/data_refresh/technical_report/figure/five_year_growth_by_region_aggregate.jpg"), width = 8, height = 6)
+```
+
+# 18 Plus Paired
+
+```{r}
+file_year <- list.files(here("data/national/data_refresh/new_national_pipeline_files/results/pred_by_year_data/18_plus_paired_levels/combined"), recursive = T, full.names = T)
+
+data_year <- data.frame()
+
+for (file in file_year) {
+ new_data <- read_csv(file)
+ 
+ data_year <- bind_rows(data_year, new_data)
+}
+
+
+
+file_month <- list.files(here("data/national/data_refresh/new_national_pipeline_files/results/pred_by_year_and_month_rolling/18_plus_paired_levels/combined"), recursive = T, full.names = T)
+
+data_month <- data.frame()
+
+for (file in file_month) {
+ new_data <- read_csv(file)
+ 
+ data_month <- bind_rows(data_month, new_data)
+}
+
+
+year_avergae_month <- data_month %>%
+  group_by(indicator, outcome_var, model_type, iso3, year) %>%
+  summarise(mean_pred = mean(pred)) %>%
+  arrange(indicator, outcome_var, model_type, iso3, year) %>%
+  mutate(annual_growth_rate_month = ifelse(year == lag(year) + 1, mean_pred / lag(mean_pred) - 1, NA)) %>%
+  filter(year > 2018) %>%
+  mutate(region = countrycode(iso3, "iso3c", "region"))
+
+year_avergae <- data_year %>%
+  arrange(indicator, outcome_var, model_type, iso3) %>%
+  mutate(annual_growth_rate = ifelse(year == lag(year) + 1, pred / lag(pred) - 1, NA)) %>%
+  filter(year > 2018) %>%
+  mutate(region = countrycode(iso3, "iso3c", "region"))
+
+compare <- year_avergae %>%
+  inner_join(year_avergae_month, by = c("indicator", "outcome_var", "model_type", "iso3", "year", "region")) %>%
+  mutate(interval = case_when(
+    year == 2020 ~ "2019-2020",
+    year == 2021 ~ "2020-2021",
+    year == 2022 ~ "2021-2022",
+    year == 2023 ~ "2022-2023",
+    year == 2024 ~ "2023-2024"
+  ))
+
+compare_diff <- compare %>%
+  filter(year == 2019 | year == 2024) %>%
+  mutate(diff_year = ifelse(lead(iso3) == iso3, lead(pred) - pred, NA),
+         diff_month = ifelse(lead(iso3) == iso3, lead(mean_pred) - pred, NA)) %>%
+  filter(is.na(diff_year) == F)
+```
+
+## Plot
+
+```{r}
+compare %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet GGI)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_prediction_by_year_18plus.jpg"), width = 10, height = 5)
+
+compare %>%
+  filter(outcome_var == "ggi", indicator == "mobile") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Mobile GGI)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "wom", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet Adoption Level Women)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "wom", indicator == "mobile") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Mobile Adoption Level Women)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "men", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet Adoption Level Men)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "men", indicator == "mobile") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Mobile Adoption Level Men)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = pred, y = mean_pred)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Yearly Prediction (Internet GGI)", y = "Annual Average from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(region))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_prediction_by_region_18plus.jpg"), width = 8, height = 6)
+
+compare %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = annual_growth_rate, y = annual_growth_rate_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Annual Growth Rate from Yearly Prediction (Internet GGI)", y = "Annual Grwoth Rate from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+compare %>%
+  filter(is.na(interval) == F) %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = annual_growth_rate, y = annual_growth_rate_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  scale_x_continuous(limits = c(-0.1, 0.4)) +
+  scale_y_continuous(limits = c(-0.1, 0.4)) +
+  labs(x = "Annual Growth Rate from Yearly Prediction (Internet GGI)", y = "Annual Grwoth Rate from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(interval))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_growth_rate_by_year_18_plus.jpg"), width = 9, height = 5)
+
+compare %>%
+  filter(is.na(interval) == F) %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = annual_growth_rate, y = annual_growth_rate_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  scale_x_continuous(limits = c(-0.1, 0.4)) +
+  scale_y_continuous(limits = c(-0.1, 0.4)) +
+  labs(x = "Annual Growth Rate from Yearly Prediction (Internet GGI)", y = "Annual Grwoth Rate from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(region))
+
+ggsave(here("national/data_refresh/technical_report/figure/year_month_growth_rate_by_region_18plus.jpg"), width = 8, height = 6)
+
+
+compare_diff %>%
+  filter(outcome_var == "ggi", indicator == "internet") %>%
+  ggplot(aes(x = diff_year, y = diff_month)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "Five-Year Difference from Yearly Prediction (Internet GGI)", y = "Five-Year Difference from Monthly Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  scale_x_continuous(limits = c(-0.1, 0.2)) +
+  scale_y_continuous(limits = c(-0.1, 0.2)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(region))
+
+ggsave(here("national/data_refresh/technical_report/figure/five_year_growth_by_region_18plus.jpg"), width = 8, height = 6)
+```
+
+# Aggregate vs 18 plus
+
+```{r}
+file_18_plus <- list.files(here("data/national/data_refresh/new_national_pipeline_files/results/pred_by_year_and_month_rolling/18_plus"), recursive = T, full.names = T)
+
+data_18_plus <- data.frame()
+
+for (file in file_18_plus) {
+ new_data <- read_csv(file)
+ 
+ data_18_plus <- bind_rows(data_18_plus, new_data)
+}
+
+data_18_plus <- data_18_plus %>%
+  filter(model_type == "combined")
+
+
+file_aggregated <- list.files(here("data/national/data_refresh/new_national_pipeline_files/results/pred_by_year_and_month_rolling/aggregate"), recursive = T, full.names = T)
+
+data_aggregated <- data.frame()
+
+for (file in file_aggregated) {
+ new_data <- read_csv(file)
+ 
+ data_aggregated <- bind_rows(data_aggregated, new_data)
+}
+
+data_aggregated <- data_aggregated %>%
+  filter(model_type == "combined")
+
+
+compare <- inner_join(data_18_plus, data_aggregated, by = c("indicator", "outcome_var", "model_type", "iso3", "year", "month")) %>%
+  mutate(region = countrycode(iso3, "iso3c", "region"))
+
+
+compare %>%
+  filter(indicator == "internet" & outcome_var == "ggi") %>%
+  ggplot(aes(x = pred.x, y = pred.y)) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "18 Plus Prediction", y = "Aggregate Prediction") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  facet_wrap(vars(year))
+
+
+compare %>%
+  filter(indicator == "mobile" & outcome_var == "wom") %>%
+  ggplot(aes(x = pred.x, y = pred.y, color = factor(year))) +
+  geom_point(alpha = 0.5) +
+  theme_cowplot() +
+  labs(x = "18 Plus Prediction (Internet GGI)", y = "Aggregate Prediction (Internet GGI)", color = "Year") +
+  stat_cor(aes(label = ..r.label..)) +
+  geom_abline(slope = 1, linetype = "dashed", color = "red") +
+  theme(legend.position = "bottom",
+        legend.justification = "center") +
+  guides(guide_legend(nrow = 1)) +
+  facet_wrap(vars(region))
+
+ggsave(here("national/data_refresh/technical_report/figure/compare_aggregate_18plus_region_year_mobile.jpg"), width = 9, height = 7)
+
+compare_int <- compare %>%
+  filter(indicator == "mobile" & outcome_var == "ggi") %>%
+  filter(is.na(pred.x) == F & is.na(pred.y) == F)
+
+mape(compare_int$pred.x, compare_int$pred.y)
+```

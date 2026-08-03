@@ -1,0 +1,1325 @@
+---
+title: "feature selection"
+format: html
+editor: visual
+---
+
+## Preparation
+
+```{r}
+library(tidyverse)
+library(here)
+library(ggcorrplot)
+library(broom)
+library(glmnet)
+
+
+int_all <- read_csv(here("data/national/data_refresh/new_national_pipeline_files/data/combined_data/internet/combined_multiple_years_no_missing_fb_aligned.csv"))
+
+mob_all <- read_csv(here("data/national/data_refresh/new_national_pipeline_files/data/combined_data/mobile/combined_multiple_years_no_missing_fb_aligned.csv"))
+
+int <- int_all %>%
+  filter(is.na(internet_ggi) == F) %>%
+  rename(year = internet_year) %>%
+  select(-contains("_year"), -country, -internet_survey_type, -conti) %>%
+  na.omit()
+
+min_max_normalize <- function(x) {
+  (x - min(x, na.rm = T)) / (max(x, na.rm = T) - min(x, na.rm = T))
+}
+
+int_predictors <- names(int[,5:83])
+
+int[int_predictors] <- lapply(int[int_predictors], min_max_normalize)
+
+
+mob <- mob_all %>%
+  filter(is.na(mobile_ggi) == F) %>%
+  rename(year = mobile_year) %>%
+  select(-contains("_year"), -country, -mobile_survey_type, -conti) %>%
+  na.omit()
+
+mob_predictors <- names(mob[,5:83])
+
+mob[mob_predictors] <- lapply(mob[mob_predictors], min_max_normalize)
+
+outcome_df <- data.frame(
+  model_name = character(),
+  method = character(),
+  outcome_var = character(),
+  model_type = character(),
+  fb_sets = character(),
+  loco_r2 = numeric(),
+  loyo_r2 = numeric(),
+  stringsAsFactors = FALSE
+)
+
+outcome_comparison_df <- data.frame(
+  model_name = character(),
+  method = character(),
+  outcome_var = character(),
+  model_type = character(),
+  fb_sets = character(),
+  loco_r2 = numeric(),
+  loyo_r2 = numeric(),
+  stringsAsFactors = FALSE
+)
+
+variable_df <- data.frame(
+  model_name = character(),
+  method = character(),
+  fb_sets = character(),
+  outcome_var = character(),
+  validation_method = character(),
+  variable = character(),
+  value = numeric()
+)
+
+baseline_var <- c("fb_18_999_r","fb_18_999_wom","fb_18_999_men")
+
+selected_var <- c("fb_20_64_r","fb_20_64_wom","fb_20_64_men", "fb_mobile_device_users_r","fb_mobile_device_users_wom","fb_mobile_device_users_men", "fb_25_29_r","fb_25_29_wom","fb_25_29_men")
+
+offline_var <- setdiff(names(int %>% select(-contains("fb")) %>% select(-contains("internet"))), c("iso3", "year"))
+
+men_var <- setdiff(names(int %>% select(contains("fb")) %>% select(contains("men"))), "fb_18_999_men")
+
+wom_var <- setdiff(names(int %>% select(contains("fb")) %>% select(contains("wom"))), "fb_18_999_wom")
+
+r_var <- setdiff(names(int %>% select(contains("fb")) %>% select(contains("_r"))), "fb_18_999_r")
+
+country_var <- "iso3"
+
+year_var <- "year"
+
+valid_online_int <- int_all %>%
+  filter(across(all_of(baseline_var), ~ !is.na(.)))
+
+valid_online_mob <- mob_all %>%
+  filter(across(all_of(baseline_var), ~ !is.na(.)))
+```
+
+## Correlation table
+
+```{r}
+int_cor <- int %>%
+  select(-c(1:5))
+
+mob_cor <- mob %>%
+  select((-c(1:5)))
+
+cor_matrices_int <- cor(int_cor, use = "complete.obs", method = "pearson")
+
+cor_matrices_mob <- cor(mob_cor, use = "complete.obs", method = "pearson")
+
+all_cor <- ls(pattern = "cor_matrices")
+
+save_path <- here("data/national/data_refresh/new_national_pipeline_files/graphs/correlation")
+
+for (cor in all_cor){
+  cor_obj <- get(cor)
+  
+  plot <- ggcorrplot(cor_obj, lab = F)
+  
+  ggsave(filename = paste0("correlation_plot_", cor, ".png"),
+         plot = plot,
+         path = save_path,
+         width = 15, height = 15)
+}
+
+save_path <- here("data/national/data_refresh/new_national_pipeline_files/files/correlation")
+
+for (cor in all_cor){
+  cor_obj <- get(cor)
+  
+  file_name <- file.path(save_path, paste0(cor, ".csv"))
+  
+  write.csv(cor_obj, file_name, row.names = TRUE)
+}
+```
+
+## Functions
+
+```{r}
+loco_cv_step <- function(data, response, predictors, country_var) {
+  
+  ##initialize a df to contain variable occurance
+  variable_df <- data.frame(
+  variable = predictors,
+  value = 0)
+  
+  ##a vector containing all unique country
+  countries <- unique(data[[country_var]])
+
+  all_predictions <- c()
+  all_actuals <- c()
+  
+  for (country in countries) {
+    # Split the data
+    train_data <- data[data[[country_var]] != country, ]
+    test_data <- data[data[[country_var]] == country, ]
+    # Conduct forward selection with the training data
+    lm1 <- lm(as.formula(paste(response, "~", paste(predictors, collapse = "+"))), data = train_data)
+    slm1 <- step(lm1,
+                 direction = "forward",
+                 trace = F)
+    
+    ## get the best predictors
+    best_predictors <- names(coef(slm1))[-1]
+    
+    #update vairable_df if a certain variable is within the best predictors
+    variable_df$value <- ifelse(variable_df$variable %in% best_predictors, variable_df$value + 1, variable_df$value)
+    
+    # Predict on the test data
+    test_predictions <- predict(slm1, newdata = test_data)
+    test_actuals <- test_data[[response]]
+
+    # Store predictions
+    all_predictions <- c(all_predictions, test_predictions)
+    all_actuals <- c(all_actuals, test_actuals)
+  }
+  
+  # calculate R2
+  ss_res <- sum((all_actuals - all_predictions)^2)
+  mean_actuals <- mean(all_actuals)
+  ss_tot <- sum((all_actuals - mean_actuals)^2)
+  overall_r2 <- 1 - ss_res / ss_tot
+
+  return(list(overall_r2, variable_df))
+}
+
+
+loco_cv_lasso <- function(data, response, predictors, country_var) {
+  
+  ##initialize a df to contain variable occurance
+  variable_df <- data.frame(
+  variable = predictors,
+  value = 0)
+
+  countries <- unique(data[[country_var]])
+  all_predictions <- c()
+  all_actuals <- c()
+
+  for (country in countries) {
+    
+    set.seed(123)
+    # Split the data
+    train_data <- data[data[[country_var]] != country, ]
+    test_data <- data[data[[country_var]] == country, ]
+
+
+      # Prepare model matrix for glmnet
+      x_train <- as.matrix(train_data %>% select(predictors))
+      y_train <- train_data[[response]]
+      x_test <- as.matrix(test_data %>% select(predictors))
+
+      cv_model <- cv.glmnet(x_train, y_train, alpha = 1, k = 2) 
+      best_model <- glmnet(x_train, y_train, alpha = 1, lambda = cv_model$lambda.min)
+      
+      # Get non-zero coefficients
+      coefs <- coef(best_model, s = cv_model$lambda.min)
+
+      non_zero_coefs <- coefs[coefs[,1] != 0, , drop = FALSE]
+  
+      non_zero_vars <- rownames(non_zero_coefs)[-1]
+      
+      #Record occurance in non-zero coefficients
+      variable_df$value <- ifelse(variable_df$variable %in% non_zero_vars, variable_df$value + 1, variable_df$value)
+      
+      # Predict on the test data
+      test_predictions <- predict(best_model, newx = x_test, s = cv_model$lambda.min)
+      test_actuals <- test_data[[response]]
+
+      # Store predictions and actuals
+      all_predictions <- c(all_predictions, test_predictions)
+      all_actuals <- c(all_actuals, test_actuals)
+}
+
+  ss_res <- sum((all_actuals - all_predictions)^2)
+
+  # Calculate SS_tot (total sum of squares)
+  mean_actuals <- mean(all_actuals)
+  ss_tot <- sum((all_actuals - mean_actuals)^2)
+
+  # Calculate overall R2
+  overall_r2 <- 1 - ss_res / ss_tot
+  cat("Overall R2 for the entire dataset:", overall_r2, "\n")
+
+  return(list(overall_r2, variable_df))
+}
+```
+
+## Comparison: Baseline, var_select and aligned
+
+### Baseline
+
+```{r, warning=F}
+##internet online
+outcomes <- c("internet_ggi", "internet_men", "internet_wom")
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  loco_cv_result <- loco_cv_step(int, response, baseline_var, country_var)
+  
+  loyo_cv_result <- loco_cv_step(int, response, baseline_var, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_online",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "baseline",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(int, response, baseline_var, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(int, response, baseline_var, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_online",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "baseline",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+##internet offline
+outcomes <- c("internet_ggi", "internet_men", "internet_wom")
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  loco_cv_result <- loco_cv_step(int, response, offline_var, country_var)
+  
+  loyo_cv_result <- loco_cv_step(int, response, offline_var, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_offline",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "offline",
+    fb_sets = "not applicable",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_offline",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "not applicable",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_offline",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "not applicable",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(int, response, offline_var, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(int, response, offline_var, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_offline",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "offline",
+    fb_sets = "not applicable",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_offline",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "not applicable",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_offline",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "not applicable",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+##internet combine
+outcomes <- c("internet_ggi", "internet_men", "internet_wom")
+predictors <- c(baseline_var, offline_var)
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  loco_cv_result <- loco_cv_step(int, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_step(int, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_combine",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "baseline",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(int, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(int, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_combine",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "baseline",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+##mobile online
+outcomes <- c("mobile_ggi", "mobile_men", "mobile_wom")
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  loco_cv_result <- loco_cv_step(mob, response, baseline_var, country_var)
+  
+  loyo_cv_result <- loco_cv_step(mob, response, baseline_var, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_online",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "baseline",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(mob, response, baseline_var, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(mob, response, baseline_var, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_online",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "baseline",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+##mobile offline
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  loco_cv_result <- loco_cv_step(mob, response, offline_var, country_var)
+  
+  loyo_cv_result <- loco_cv_step(mob, response, offline_var, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_offline",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "offline",
+    fb_sets = "not applicable",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_offline",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "not applicable",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_offline",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "not applicable",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(mob, response, offline_var, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(mob, response, offline_var, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_offline",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "offline",
+    fb_sets = "not applicable",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_offline",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "not applicable",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_offline",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "not applicable",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+##mobile combine
+predictors <- c(baseline_var, offline_var)
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  loco_cv_result <- loco_cv_step(mob, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_step(mob, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_combine",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "baseline",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(mob, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(mob, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_combine",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "baseline",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "baseline",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+```
+
+### Var_select
+
+```{r}
+##internet online
+outcomes <- c("internet_ggi", "internet_men", "internet_wom")
+
+predictors <- c(baseline_var, selected_var)
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  loco_cv_result <- loco_cv_step(int, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_step(int, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_online",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "var_select",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(int, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(int, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_online",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "var_select",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+
+
+##internet combine
+predictors <- c(baseline_var, selected_var, offline_var)
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  loco_cv_result <- loco_cv_step(int, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_step(int, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_combine",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "var_select",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(int, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(int, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_combine",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "var_select",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+##mobile online
+outcomes <- c("mobile_ggi", "mobile_men", "mobile_wom")
+
+predictors <- c(baseline_var, selected_var)
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  loco_cv_result <- loco_cv_step(mob, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_step(mob, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_online",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "var_select",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(mob, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(mob, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_online",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "var_select",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+
+
+##mobile combine
+predictors <- c(baseline_var, selected_var, offline_var)
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  loco_cv_result <- loco_cv_step(mob, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_step(mob, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_combine",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "var_select",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(mob, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(mob, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_combine",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "var_select",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "var_select",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+```
+
+### Aligned
+
+```{r}
+##internet online
+outcomes <- c("internet_ggi", "internet_men", "internet_wom")
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  if (outcome == "internet_ggi") {
+  predictors <- c(baseline_var, r_var)
+} else if (outcome == "internet_men") {
+  predictors <- c(baseline_var, men_var)
+} else if (outcome == "internet_wom") {
+  predictors <- c(baseline_var, wom_var)
+}
+  
+  loco_cv_result <- loco_cv_step(int, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_step(int, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_online",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "aligned",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(int, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(int, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_online",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "aligned",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+
+
+##internet combine
+for (outcome in outcomes) {
+
+  response <- outcome
+  
+  if (outcome == "internet_ggi") {
+  predictors <- c(baseline_var, offline_var, r_var)
+} else if (outcome == "internet_men") {
+  predictors <- c(baseline_var, offline_var, men_var)
+} else if (outcome == "internet_wom") {
+  predictors <- c(baseline_var, offline_var, wom_var)
+}
+  
+  loco_cv_result <- loco_cv_step(int, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_step(int, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_combine",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "aligned",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(int, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(int, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "internet_combine",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "aligned",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "internet_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+##mobile online
+outcomes <- c("mobile_ggi", "mobile_men", "mobile_wom")
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  if (outcome == "mobilet_ggi") {
+  predictors <- c(baseline_var, r_var)
+} else if (outcome == "mobile_men") {
+  predictors <- c(baseline_var, men_var)
+} else if (outcome == "mobile_wom") {
+  predictors <- c(baseline_var, wom_var)
+}
+  
+  loco_cv_result <- loco_cv_step(mob, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_step(mob, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_online",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "aligned",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(mob, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(mob, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_online",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "online",
+    fb_sets = "aligned",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_online",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+
+
+##mobile combine
+
+for (outcome in outcomes) {
+  
+  response <- outcome
+  
+  if (outcome == "mobilet_ggi") {
+  predictors <- c(baseline_var, offline_var, r_var)
+} else if (outcome == "mobile_men") {
+  predictors <- c(baseline_var, offline_var, men_var)
+} else if (outcome == "mobile_wom") {
+  predictors <- c(baseline_var, offline_var, wom_var)
+}
+  
+  loco_cv_result <- loco_cv_step(mob, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_step(mob, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_combine",
+    method = "forward selection",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "aligned",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "forward selection",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-year-out"
+           ))
+  
+  loco_cv_result <- loco_cv_lasso(mob, response, predictors, country_var)
+  
+  loyo_cv_result <- loco_cv_lasso(mob, response, predictors, year_var)
+  
+  outcome_comparison_df <- rbind(outcome_comparison_df, data.frame(
+    model_name = "mobile_combine",
+    method = "LASSO",
+    outcome_var = outcome,
+    model_type = "combine",
+    fb_sets = "aligned",
+    loco_r2 = loco_cv_result[[1]],
+    loyo_r2 = loyo_cv_result[[1]]
+  ))
+  
+  variable_df <- rbind(variable_df, loco_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-country-out"
+           ))
+  
+  variable_df <- rbind(variable_df, loyo_cv_result[[2]] %>%
+    mutate(model_name = "mobile_combine",
+           method = "LASSO",
+           outcome_var = outcome,
+           fb_sets = "aligned",
+           validation_method = "leave-one-year-out"
+           ))
+  
+}
+
+write_csv(outcome_comparison_df, here("data/national/data_refresh/new_national_pipeline_files/files/logs/baseline_var_select_aligned_comparison_result.csv"))
+
+write_csv(variable_df, here("data/national/data_refresh/new_national_pipeline_files/files/logs/variable_occurance.csv"))
+```
+
+## Forward selection customized code
+
+```{r}
+forward_selection <- function(data, response, predictors) {
+  
+  selected_predictors <- c()
+  remaining_predictors <- predictors
+  best_r2 <- 0
+  r2_improvement <- 1 
+  
+  while (r2_improvement > 0 & length(remaining_predictors) != 0) {
+    r2_list <- c()
+    
+    for (predictor in remaining_predictors) {
+      formula <- as.formula(paste(response, "~", paste(c(selected_predictors, predictor), collapse = "+")))
+      model <- lm(formula, data = data)
+      r2 <- summary(model)$adj.r.squared
+      r2_list <- c(r2_list, r2)
+    }
+    
+    best_r2_new <- max(r2_list, na.rm = TRUE)
+    best_predictor <- remaining_predictors[which.max(r2_list)]
+    r2_improvement <- best_r2_new - best_r2
+    
+    if (r2_improvement > 0) {
+      selected_predictors <- c(selected_predictors, best_predictor)
+      remaining_predictors <- setdiff(remaining_predictors, best_predictor)
+      best_r2 <- best_r2_new
+      cat("Added predictor:", best_predictor, "with R2:", best_r2, "\n")
+    }
+  }
+  
+  final_formula <- as.formula(paste(response, "~", paste(selected_predictors, collapse = "+")))
+  
+  final_model <- lm(final_formula, data = data)
+  
+  final_summary <- summary(final_model)
+  final_r2 <- final_summary$r.squared
+  final_adj_r2 <- final_summary$adj.r.squared
+
+  predictors_str <- paste(selected_predictors, collapse = ", ")
+  
+  return(list(
+    model = final_model, 
+    formula = final_formula, 
+    predictors = predictors_str, 
+    r2 = final_r2, 
+    adjusted_r2 = final_adj_r2
+  ))
+}
+```
