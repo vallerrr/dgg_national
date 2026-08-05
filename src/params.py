@@ -27,6 +27,14 @@ GRAPHS = OUTPUTS / 'graphs'     # -> Dropbox .../new_national_pipeline_files/gra
 DOC = ROOT / 'doc'
 LOGS = ROOT / 'logs'
 
+# Legacy path names used by the notebooks imported from dgg_research's `origin/pipeline` branch
+# (D20). They resolve through the data/external symlink, so §1 still holds — no absolute path.
+# New code should use RAW / PROCESSED / RESULTS / MODELS above.
+DROPBOX_ROOT = EXTERNAL / 'national/data_refresh/new_national_pipeline_files'
+dropbox_path = DROPBOX_ROOT
+dropbox_data_path = DROPBOX_ROOT / 'data'
+dropbox_result_path = DROPBOX_ROOT / 'results/pred_by_year_and_month'
+
 # upstream Facebook pipeline artefacts, reached through data/external
 FB_COUNTS = EXTERNAL / 'national/pipeline/files/preprocessed_counts'
 FB_PREPROCESSED = EXTERNAL / 'pipeline/preprocessed/national'
@@ -52,7 +60,22 @@ model_folder = '18_plus'  # folder to store the models
 
 SEED = 42  # §9: every randomised step reads this
 
-sactioned_countries = ['RUS','SDN','CHI']
+# Countries with no Facebook data, excluded from the published series. `dgg_pipeline` and the
+# `origin/pipeline` branch of dgg_research both use CHN (China); the 'CHI' below is Channel Islands
+# and never matched anything. CHN is what the published predictions actually filter on. See D21.
+sanction_countries = ['RUS', 'SDN', 'CHN']
+sactioned_countries = sanction_countries  # legacy misspelling, kept so older scripts still resolve
+
+# Commonwealth of Independent States. This is the "CIS" in the `combined_with_CIS` model name: the
+# variant fitted *with* these countries in the training sample (D12).
+# NOTE: the upstream list writes Tajikistan as 'TKJ', which is not an ISO3 code — the real code is
+# 'TJK'. Corrected here; see D21 for what the typo cost.
+CIS_countries = ['BEL', 'KAZ', 'ARM', 'KGZ', 'MDA', 'AZE', 'TJK', 'UZB', 'TKM']
+
+# Excluded from analysis: Yemen's level predictions are degenerate (female internet pinned at the
+# zero floor throughout), which makes every derived ratio meaningless. Both the upstream convergence
+# analysis and trend.qmd drop it explicitly. See D21.
+excluded_countries = ['YEM']
 
 
 # list
@@ -122,9 +145,14 @@ COHERENT_GGI = {
     # dgg_pipeline's published series is the golden standard: read-only, never written to.
     'source': EXTERNAL / 'pipeline/result/national/aggregate_files.csv',
     'indicators': ['internet', 'mobile'],
-    'parity_cap': 1.0,   # the capped measure is min(raw, 1) — values >1 are out of scope
-    'epsilon': 1e-9,     # floor for a zero male level, so the ratio stays defined
+    'parity_cap': 1.0,    # the primary measure is min(raw, 1) — values >1 are out of scope
+    'near_zero': 1e-6,    # male levels below this are not divided by; the row is flagged instead
+    'tolerance': 1e-9,    # numerical tolerance for the assertions
     'regions': RAW / 'iso3_regions.csv',   # World Bank regions, all 214 countries covered
+    # The national models use fb_vars_18_plus only, so there is a single age group. Carried as an
+    # explicit key so an age-disaggregated series can slot in without changing the grain.
+    'age_group': '18_plus',
+    'focus_years': [2015, 2020, 2025],
 }
 
 countries_to_exclude_for_imputation = {'mobile': ['ABW', 'AND', 'ASM', 'ATG', 'BMU', 'CHI', 'CSK', 'CUW', 'CYM', 'DDR', 'DMA', 'FRO', 'GIB', 'GRL', 'GUM', 'HKG', 'IMN', 'KNA', 'MAC', 'MAF', 'MCO', 'MNP', 'MSR', 'MTQ', 'NCL', 'NIU', 'NRU', 'PRI', 'PRK', 'PSE', 'PYF', 'SAS', 'SCG', 'SHN', 'SUN', 'SXM', 'TCA', 'TWN', 'VDR', 'VGB', 'VIR', 'XKX', 'XTI', 'XXK', 'YMD', 'YUG'],
@@ -154,8 +182,26 @@ colors = {
 # ====================================================================================================
 # visualisation style (§6) — every figure reads from here, nothing hardcoded inline
 # ====================================================================================================
+# Categorical assignment order for the project palette. Same eight colours as `colors` — the
+# project's look is unchanged — but sequenced so adjacent series stay distinguishable. The dict
+# order fails discriminability (purple vs blue: ΔE 8.2 normal-vision, 2.8 protan, against a floor
+# of 15/8); this order lifts the worst adjacent pair to 19.9 normal / 11.9 protan. See D18.
+plot_color_order = ['light_blue', 'red', 'blue', 'peach', 'teal', 'warm_yellow', 'purple', 'soft_pink']
+
+# Sub-Saharan Africa subregion split used by the trend figures, preserved from
+# analysis/technical_report/trend.qmd. `region2` is the World Bank region, except that
+# Sub-Saharan Africa is replaced by these subregions.
+ssa_subregions = {
+    'Eastern Africa': ['BDI', 'COM', 'DJI', 'ERI', 'ETH', 'KEN', 'MDG', 'MWI', 'MUS', 'MOZ',
+                       'REU', 'RWA', 'SYC', 'SOM', 'SSD', 'TZA', 'UGA', 'ZMB', 'ZWE'],
+    'Central Africa': ['AGO', 'CMR', 'CAF', 'TCD', 'COD', 'COG', 'GNQ', 'GAB', 'STP'],
+    'Western Africa': ['BEN', 'BFA', 'CPV', 'CIV', 'GMB', 'GHA', 'GIN', 'GNB', 'LBR', 'MLI',
+                       'MRT', 'NER', 'NGA', 'SEN', 'SLE', 'TGO'],
+    'Southern Africa': ['BWA', 'LSO', 'NAM', 'SWZ', 'ZAF'],
+}
+
 STYLE = {
-    "colors":   list(colors.values()),
+    "colors":   [colors[k] for k in plot_color_order],
     "figsize":  (12, 7),
     "title_fs": 16,
     "label_fs": 13,

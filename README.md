@@ -76,12 +76,24 @@ Analysis and presentation code lives in [src/analysis/](src/analysis/); retired 
 | `analysis/01_result_present.ipynb` | Result presentation, maps |
 | `analysis/02_result_compare_yearly_paa.ipynb` | Yearly comparison for the PAA poster |
 | `analysis/03_monthly_model_fitting.ipynb` | Monthly model fitting exploration |
-| `analysis/04_model_feature_importance.ipynb` | Feature importance, error-estimation betas |
-| `analysis/05_feature_selection.qmd` | R-side feature selection |
-| `analysis/technical_report/*.qmd` | Technical report and trend figures; output in `outputs/fig/` |
+| `analysis/04_predict_result_analysis.ipynb` | **Beta and sigma convergence**, prediction maps, regional trends |
+| `analysis/05_adolescent_analysis.ipynb` | **Adolescent vs adult** predictions by region / continent / HDI |
+| `analysis/06_adolescent_national_prediction.ipynb` | Adolescent national prediction, error estimates |
+| `analysis/07_post_analysis_trend.ipynb` | Post-analysis trends, comparison against the previous round |
+| `analysis/08_s1_investigations.ipynb` | Supplementary: small and negative predictions, threshold checks |
+| `analysis/09_coherent_ggi_figures.ipynb` | Trend figures on the coherent GGI -> `outputs/fig/coherent_ggi/` |
+| `analysis/technical_report/*.qmd` | Technical report and original trend figures; output in `outputs/fig/` |
 
-Notebooks 01–04 are **not migrated** — they still carry the old `national.data_refresh.src`
-imports. Python modules in `src/analysis/` need `import _bootstrap` before `import params`, since
+See [src/analysis/README.md](src/analysis/README.md) for per-notebook status and known input gaps.
+`04`-`08` were imported from `dgg_research`'s `origin/pipeline` branch, which this repo never
+inherited (D20).
+
+Notebooks 01–03 are **not migrated** — they still carry the old `national.data_refresh.src`
+imports. They are not duplicates of the `src/` pipeline: they consume its outputs to make
+figures and exploratory tables. Two do overlap with code that has since moved into the pipeline —
+`04_model_feature_importance.ipynb` computes the error-estimation betas now produced by
+`11_fit_final_models.py`, and `02_result_compare_yearly_paa.ipynb` contains an early
+direct-vs-composited GGI comparison now superseded by `13_coherent_ggi.py`. Python modules in `src/analysis/` need `import _bootstrap` before `import params`, since
 only `src/` lands on `sys.path` automatically.
 
 "Blocked" means the imports and paths are fixed and the script is structurally sound, but an input
@@ -117,3 +129,4 @@ equivalent and reproduces its predictions value-for-value.
 - [data/README.md](data/README.md) — provenance, dictionary, symlink recreation
 - [doc/methodology.md](doc/methodology.md) — methods narrative, assumptions, limitations
 - [doc/decisions.md](doc/decisions.md) — data and method decision records
+- [doc/data_updates.md](doc/data_updates.md) — data currency audit and refresh candidates

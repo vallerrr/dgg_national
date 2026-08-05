@@ -22,3 +22,6 @@
 **/figure-html/
 **/libs/
 *.html
+/outputs
+/outputs
+/doc

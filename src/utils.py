@@ -211,6 +211,47 @@ def load_model(file_path):
     return joblib.load(file_path) if os.path.exists(file_path) else None
 
 
+def to_markdown_table(df, float_fmt='{:.4f}'):
+    """
+    render a DataFrame as a GitHub-flavoured markdown table
+
+    Hand-rolled rather than pandas' `.to_markdown()`, which needs `tabulate` — not worth adding a
+    dependency to a shared conda environment for a few summary tables.
+    """
+    def cell(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ''
+        return float_fmt.format(v) if isinstance(v, (float, np.floating)) else str(v)
+
+    header = '| ' + ' | '.join(str(c) for c in df.columns) + ' |'
+    rule = '| ' + ' | '.join('---' for _ in df.columns) + ' |'
+    rows = ['| ' + ' | '.join(cell(v) for v in row) + ' |' for row in df.itertuples(index=False)]
+    return '\n'.join([header, rule, *rows])
+
+
+def mark_regions(df, iso3_col='iso3'):
+    """
+    add `conti` (continent) and `subregion` (UN M49) columns from an iso3 column
+
+    Ported from dgg_research's `origin/pipeline` branch, where the convergence and adolescent
+    notebooks group by these. Reads the UN M49 definitions from data/raw rather than an absolute
+    Dropbox path; TWN and XKX are absent from that file and are set by hand, as upstream.
+    """
+    # UN M49 subregion
+    m49 = pd.read_csv(params.RAW / 'definition_of_regions.csv', delimiter=';')
+    df['conti'] = df[iso3_col].apply(get_continent_from_iso3)
+    df['subregion'] = df[iso3_col].map(dict(zip(m49['ISO-alpha3 Code'], m49['Region Name'])))
+    df.loc[df[iso3_col] == 'TWN', 'subregion'] = 'Eastern Asia'
+    df.loc[df[iso3_col] == 'XKX', 'subregion'] = 'Southern Europe'
+
+    # World Bank region — the scheme the trend and convergence figures group by
+    wb = pd.read_csv(params.COHERENT_GGI['regions'])
+    df['region'] = df[iso3_col].map(dict(zip(wb['iso3'], wb['region'])))
+    df.loc[df[iso3_col] == 'SHN', 'region'] = 'Sub-Saharan Africa'   # St Helena
+    df.loc[df[iso3_col] == 'XKX', 'region'] = 'Europe & Central Asia'  # Kosovo
+    return df
+
+
 def load_regions():
     """
     World Bank region per iso3 ('East Asia & Pacific', 'Europe & Central Asia', …)
@@ -221,12 +262,30 @@ def load_regions():
 
 
 def get_country_name_from_iso3(iso3):
-    """readable country name, mirroring get_continent_from_iso3's fallback style"""
-    iso3_dict = {'XKX': 'Kosovo', 'CHI': 'Channel Islands', 'ANT': 'Netherlands Antilles'}
+    """
+    readable country name, mirroring get_continent_from_iso3's fallback style
+
+    pycountry returns full official names ('Congo, The Democratic Republic of the'), which are too
+    long to direct-label a chart with. The overrides give the short conventional form.
+    """
+    iso3_dict = {
+        'XKX': 'Kosovo', 'CHI': 'Channel Islands', 'ANT': 'Netherlands Antilles',
+        'COD': 'DR Congo', 'COG': 'Congo', 'TZA': 'Tanzania', 'VEN': 'Venezuela',
+        'BOL': 'Bolivia', 'IRN': 'Iran', 'KOR': 'South Korea', 'PRK': 'North Korea',
+        'LAO': 'Laos', 'SYR': 'Syria', 'MDA': 'Moldova', 'RUS': 'Russia', 'VNM': 'Vietnam',
+        'TWN': 'Taiwan', 'CIV': "Côte d'Ivoire", 'FSM': 'Micronesia', 'GBR': 'United Kingdom',
+        'USA': 'United States', 'ARE': 'UAE', 'CAF': 'Central African Rep.', 'BRN': 'Brunei',
+        'PSE': 'Palestine', 'MKD': 'North Macedonia', 'SSD': 'South Sudan', 'CPV': 'Cabo Verde',
+        'VCT': 'St Vincent & Grenadines', 'KNA': 'St Kitts & Nevis', 'LCA': 'St Lucia',
+        'TTO': 'Trinidad & Tobago', 'ATG': 'Antigua & Barbuda', 'BIH': 'Bosnia & Herzegovina',
+        'STP': 'São Tomé & Príncipe', 'GNB': 'Guinea-Bissau', 'GNQ': 'Equatorial Guinea',
+    }
     if iso3 in iso3_dict:
         return iso3_dict[iso3]
     country = pycountry.countries.get(alpha_3=iso3)
-    return country.name if country else None
+    if not country:
+        return None
+    return getattr(country, 'common_name', country.name)
 
 
 def load_world():
