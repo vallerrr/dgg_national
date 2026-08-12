@@ -13,6 +13,19 @@ editor: visual
 library(haven)
 library(tidyverse)
 library(here)
+library(countrycode)
+source(here("src", "R_params.R"))
+check_paths()
+
+#' Guard for the positional country/year vectors: stop with the actual file list if the count
+#' has changed, instead of failing later inside mutate() with an opaque recycling error.
+expect_files <- function(files, n) {
+  if (length(files) != n) {
+    stop(sprintf("expected %d survey files, found %d:\n  %s", n, length(files),
+                 paste(basename(files), collapse = "\n  ")), call. = FALSE)
+  }
+  invisible(files)
+}
 
 process_internet_use <- function(file_names, gender) {
   # Initialize an empty list to store data frames
@@ -150,7 +163,7 @@ process_mobile_use <- function(file_names, gender) {
 ## Calculate Int
 
 ```{r}
-fefile_list_w7 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave7"), pattern = "IR", recursive = T, full.names = T)
+fefile_list_w7 <- list.files(DHS_WAVE7, pattern = "IR", recursive = T, full.names = T)
 
 fefile_list_w7_without_int <- check_files_for_variable(fefile_list_w7, "v171a")
 fefile_list_w7 <- fefile_list_w7[!fefile_list_w7 %in% fefile_list_w7_without_int]
@@ -163,7 +176,7 @@ fe_dhs_w7_int <- process_internet_use(fefile_list_w7, "female") %>%
          survey_start = c(2015, 2015, 2017, 2016, 2018, 2016, 2019, 2018, 2016, 2019, 2017, 2017, 2019, 2015, 2016, 2018, 2019, 2016, 2018, 2017, 2016, 2019, 2016, 2015, 2016, 2016, 2018, 2015),
          survey_duration = c(2,2,2,2,1,1,3,1,2,3,1,2,2,2,2, 1,3,1,1,2,3,1,1,2,1,1,1,1))
 
-mfile_list_w7 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave7"), pattern = "MR7", recursive = T, full.names = T)
+mfile_list_w7 <- list.files(DHS_WAVE7, pattern = "MR7", recursive = T, full.names = T)
 mfile_list_w7_without_int <- check_files_for_variable(mfile_list_w7, "mv171a")
 mfile_list_w7 <- mfile_list_w7[!mfile_list_w7 %in% mfile_list_w7_without_int]
 m_dhs_w7_int <- process_internet_use(mfile_list_w7, "male") %>%
@@ -173,7 +186,7 @@ m_dhs_w7_int <- process_internet_use(mfile_list_w7, "male") %>%
          survey_start = c(2015, 2015, 2017, 2016, 2018, 2016, 2019, 2018, 2016, 2019, 2017, 2017, 2019, 2015, 2016, 2018, 2019, 2016, 2018, 2017, 2016, 2019, 2016, 2015, 2016, 2016, 2018, 2015),
          survey_duration = c(2,2,2,2,1,1,3,1,2,3,1,2,2,2,2, 1,3,1,1,2,3,1,1,2,1,1,1,1))
 
-fefile_list_w8 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave8"), pattern = "IR", recursive = T, full.names = T)
+fefile_list_w8 <- list.files(DHS_WAVE8, pattern = "IR", recursive = T, full.names = T)
 
 fefile_list_w8 <- fefile_list_w8[-11]
 fe_dhs_w8_int <- process_internet_use(fefile_list_w8, "female") %>%
@@ -183,7 +196,7 @@ fe_dhs_w8_int <- process_internet_use(fefile_list_w8, "female") %>%
          gender = "female",
          survey = "dhs8")
 
-mfile_list_w8 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave8"), pattern = "MR8", recursive = T, full.names = T)
+mfile_list_w8 <- list.files(DHS_WAVE8, pattern = "MR8", recursive = T, full.names = T)
 
 m_dhs_w8_int <- process_internet_use(mfile_list_w8, "male") %>%
   mutate(country = c("Burkina Faso","Cambodia", "Cote d'Ivoire","Gambia", "Ghana","Kenya","Lesotho", "Madagascar","Mozambique", "Nepal", "Rwanda", "Tanzania"),
@@ -193,7 +206,7 @@ m_dhs_w8_int <- process_internet_use(mfile_list_w8, "male") %>%
          survey = "dhs8")
 
 
-fefile_list_c <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/continuous"), pattern = "IR", recursive = T, full.names = T)
+fefile_list_c <- list.files(DHS_CONTINUOUS, pattern = "IR", recursive = T, full.names = T)
 
 fefile_list_c_without_int <- check_files_for_variable(fefile_list_c, "v171a")
 fefile_list_c <- fefile_list_c[!fefile_list_c %in% fefile_list_c_without_int]
@@ -205,7 +218,7 @@ fe_dhs_c_int <- process_internet_use(fefile_list_c, "female") %>%
          survey_duration = c(1,1,1),
          survey = c("continuous dhs7","continuous dhs8", "continuous dhs8"))
 
-mfile_list_c <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/continuous"), pattern = "MR", recursive = T, full.names = T)
+mfile_list_c <- list.files(DHS_CONTINUOUS, pattern = "MR", recursive = T, full.names = T)
 mfile_list_c_without_int <- check_files_for_variable(mfile_list_c, "mv171a")
 mfile_list_c <- mfile_list_c[!mfile_list_c %in% mfile_list_c_without_int]
 
@@ -216,9 +229,14 @@ m_dhs_c_int <- process_internet_use(mfile_list_c, "male") %>%
          survey_duration = c(1,1,1),
          survey = c("continuous dhs7","continuous dhs8", "continuous dhs8"))
 
-#####New data#############
-fefile_list_new <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/update"), pattern = "IR.*\\.DTA$", recursive = T, full.names = T, ignore.case = T)
+##### New data (2023-2025 surveys) #############
+# These live in dhs/wave8+ ; earlier versions of this file called the folder `update`.
+# The country / survey_start / survey_duration vectors below are positional: they must line up
+# with `list.files()` order, which is alphabetical by folder (AO, CD, ET, JO, ML, MW, NG, RW, SN,
+# ZM). `expect_files()` fails loudly if the folder gains or loses a survey.
+fefile_list_new <- list.files(DHS_WAVE8_PLUS, pattern = "IR.*\\.DTA$", recursive = T, full.names = T, ignore.case = T)
 
+expect_files(fefile_list_new, 10)
 fe_dhs_new_int <- process_internet_use(fefile_list_new, "female") %>%
   mutate(gender = "female",
          country = c("Angola", "Democratic Republic of the Congo", "Ethiopia", "Jordan",  "Mali", "Malawi", "Nigeria", "Rwanda", "Senegal", "Zambia"),
@@ -226,8 +244,9 @@ fe_dhs_new_int <- process_internet_use(fefile_list_new, "female") %>%
          survey_duration = c(2, 2, 2, 1, 2, 1, 2, 1, 1, 1)) %>%
   mutate(survey = ifelse(country == "Senegal", "continuous dhs8", "dhs8"))
 
-mfile_list_new <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/update"), pattern = "MR.*\\.dta$", recursive = T, full.names = T, ignore.case = T)
+mfile_list_new <- list.files(DHS_WAVE8_PLUS, pattern = "MR.*\\.dta$", recursive = T, full.names = T, ignore.case = T)
 
+expect_files(mfile_list_new, 10)
 m_dhs_new_int <- process_internet_use(mfile_list_new, "male") %>%
   mutate(gender = "male",
          country = c("Angola", "Democratic Republic of the Congo", "Ethiopia", "Jordan",  "Mali", "Malawi", "Nigeria", "Rwanda", "Senegal", "Zambia"),
@@ -243,7 +262,7 @@ internet_penetration_dhs <- bind_rows(fe_dhs_c_int,fe_dhs_w7_int,fe_dhs_w8_int,m
 ## Calculate Mob
 
 ```{r}
-fefile_list_w7 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave7"), pattern = "IR", recursive = T, full.names = T)
+fefile_list_w7 <- list.files(DHS_WAVE7, pattern = "IR", recursive = T, full.names = T)
 
 fefile_list_w7_without_mob <- check_files_for_variable(fefile_list_w7, "v169a")
 fefile_list_w7 <- fefile_list_w7[!fefile_list_w7 %in% fefile_list_w7_without_mob]
@@ -258,7 +277,7 @@ fe_dhs_w7_mob <- process_mobile_use(fefile_list_w7, "female") %>%
          survey_duration = c(2,2,2,2,2,1,1,3,1,2,3,1,2,2,2,2, 1,3,1,1,2,3,1,1,2,1,1,1,1))
 
 
-fefile_list_w8 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave8"), pattern = "IR", recursive = T, full.names = T)
+fefile_list_w8 <- list.files(DHS_WAVE8, pattern = "IR", recursive = T, full.names = T)
 fefile_list_w8 <- fefile_list_w8[-11]
 fe_dhs_w8_mob <- process_mobile_use(fefile_list_w8, "female") %>%
   mutate(country = c("Burkina Faso","Cambodia", "Cote d'Ivoire","Gambia", "Ghana","Kenya","Lesotho", "Madagascar","Mozambique", "Nepal", "Rwanda", "Tanzania"),
@@ -268,7 +287,7 @@ fe_dhs_w8_mob <- process_mobile_use(fefile_list_w8, "female") %>%
          survey = "dhs8")
 
 
-fefile_list_c <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/continuous"), pattern = "IR", recursive = T, full.names = T)
+fefile_list_c <- list.files(DHS_CONTINUOUS, pattern = "IR", recursive = T, full.names = T)
 
 fefile_list_c_without_mob <- check_files_for_variable(fefile_list_c, "v169a")
 fefile_list_c <- fefile_list_c[!fefile_list_c %in% fefile_list_c_without_int]
@@ -280,7 +299,7 @@ fe_dhs_c_mob <- process_mobile_use(fefile_list_c, "female") %>%
          survey_duration = c(1,1,1),
          survey = c("continuous dhs7","continuous dhs8", "continuous dhs8"))
 
-mfile_list_w7 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave7"), pattern = "MR7", recursive = T, full.names = T)
+mfile_list_w7 <- list.files(DHS_WAVE7, pattern = "MR7", recursive = T, full.names = T)
 
 mfile_list_w7_without_mob <- check_files_for_variable(mfile_list_w7, "mv169a")
 mfile_list_w7 <- mfile_list_w7[!mfile_list_w7 %in% mfile_list_w7_without_mob]
@@ -293,7 +312,7 @@ m_dhs_w7_mob <- process_mobile_use(mfile_list_w7, "male") %>%
          survey_start = c(2017, 2015, 2015, 2017, 2016, 2018, 2016, 2019, 2018, 2016, 2019, 2017, 2017, 2019, 2015, 2016, 2018, 2019, 2016, 2018, 2017, 2016, 2019, 2016, 2015, 2016, 2016, 2018, 2015),
          survey_duration = c(2,2,2,2,2,1,1,3,1,2,3,1,2,2,2,2, 1,3,1,1,2,3,1,1,2,1,1,1,1))
 
-mfile_list_w8 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave8"), pattern = "MR8", recursive = T, full.names = T)
+mfile_list_w8 <- list.files(DHS_WAVE8, pattern = "MR8", recursive = T, full.names = T)
 
 m_dhs_w8_mob <- process_mobile_use(mfile_list_w8, "male") %>%
   mutate(country = c("Burkina Faso","Cambodia", "Cote d'Ivoire","Gambia", "Ghana","Kenya","Lesotho", "Madagascar","Mozambique", "Nepal", "Rwanda", "Tanzania"),
@@ -302,7 +321,7 @@ m_dhs_w8_mob <- process_mobile_use(mfile_list_w8, "male") %>%
          gender = "male",
          survey = "dhs8")
 
-mfile_list_c <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/continuous"), pattern = "MR", recursive = T, full.names = T)
+mfile_list_c <- list.files(DHS_CONTINUOUS, pattern = "MR", recursive = T, full.names = T)
 mfile_list_c_without_mob <- check_files_for_variable(mfile_list_c, "mv169a")
 mfile_list_c <- mfile_list_c[!mfile_list_c %in% mfile_list_c_without_mob]
 
@@ -313,9 +332,14 @@ m_dhs_c_mob <- process_mobile_use(mfile_list_c, "male") %>%
          survey_duration = c(1,1,1),
          survey = c("continuous dhs7","continuous dhs8", "continuous dhs8"))
 
-#####New data#############
-fefile_list_new <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/update"), pattern = "IR.*\\.DTA$", recursive = T, full.names = T, ignore.case = T)
+##### New data (2023-2025 surveys) #############
+# These live in dhs/wave8+ ; earlier versions of this file called the folder `update`.
+# The country / survey_start / survey_duration vectors below are positional: they must line up
+# with `list.files()` order, which is alphabetical by folder (AO, CD, ET, JO, ML, MW, NG, RW, SN,
+# ZM). `expect_files()` fails loudly if the folder gains or loses a survey.
+fefile_list_new <- list.files(DHS_WAVE8_PLUS, pattern = "IR.*\\.DTA$", recursive = T, full.names = T, ignore.case = T)
 
+expect_files(fefile_list_new, 10)
 fe_dhs_new_mob <- process_mobile_use(fefile_list_new, "female") %>%
   mutate(gender = "female",
          country = c("Angola", "Democratic Republic of the Congo", "Ethiopia", "Jordan",  "Mali", "Malawi", "Nigeria", "Rwanda", "Senegal", "Zambia"),
@@ -323,8 +347,9 @@ fe_dhs_new_mob <- process_mobile_use(fefile_list_new, "female") %>%
          survey_duration = c(2, 2, 2, 1, 2, 1, 2, 1, 1, 1)) %>%
   mutate(survey = ifelse(country == "Senegal", "continuous dhs8", "dhs8"))
 
-mfile_list_new <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/update"), pattern = "MR.*\\.dta$", recursive = T, full.names = T, ignore.case = T)
+mfile_list_new <- list.files(DHS_WAVE8_PLUS, pattern = "MR.*\\.dta$", recursive = T, full.names = T, ignore.case = T)
 
+expect_files(mfile_list_new, 10)
 m_dhs_new_mob <- process_mobile_use(mfile_list_new, "male") %>%
   mutate(gender = "male",
          country = c("Angola", "Democratic Republic of the Congo", "Ethiopia", "Jordan",  "Mali", "Malawi", "Nigeria", "Rwanda", "Senegal", "Zambia"),
@@ -344,7 +369,7 @@ mobile_ownership_dhs <- bind_rows(fe_dhs_c_mob,fe_dhs_w7_mob,fe_dhs_w8_mob,m_dhs
 ## Get dir
 
 ```{r}
-list_dir <- list.dirs(here("data/national/adolescent_modelling/data_refresh/mics"), recursive = F, full.names = T)
+list_dir <- list.dirs(MICS_DIR, recursive = F, full.names = T)
 
 list_dir
 
@@ -380,12 +405,26 @@ for (dir in list_dir) {
 ## Set function
 
 ```{r}
+#' read_sav() that survives the MICS files with a mislabelled encoding.
+#'
+#' haven trusts the encoding declared in the .sav header; Mongolia MICS 2018 (and any file like
+#' it) carries bytes that are invalid under that declaration and aborts the read. latin1 accepts
+#' any byte sequence, so the fallback always parses — only string labels are affected, and this
+#' pipeline reads numeric variables.
+read_sav_safe <- function(file, ...) {
+  tryCatch(read_sav(file, ...),
+           error = function(e) {
+             message("re-reading ", basename(dirname(file)), "/", basename(file), " as latin1")
+             read_sav(file, ..., encoding = "latin1")
+           })
+}
+
 check_files_for_variable <- function(file_list, variable_name) {
   files_without_variable <- c()  # Initialize an empty vector to store file names
   
   # Check each file for the specified variable
   for (file in file_list) {
-    data <- read_sav(file,n_max = 1000)
+    data <- read_sav_safe(file, n_max = 1000)
     
     # If data is successfully read, check for the variable
     if (!is.null(data)) {
@@ -415,7 +454,7 @@ internet_use_mics <- function(file_names, gender) {
   # Loop over each file name
   for (file in file_names) {
     # Read in the data from the DTA file with selected variables
-    data <- read_sav(file, col_select = selected_vars) %>%
+    data <- read_sav_safe(file, col_select = all_of(selected_vars)) %>%
       mutate(harm = ifelse(max(!!sym(age_vars),na.rm = T) < 50,0,1),
              sample_size = n()) %>%
       filter(!!sym(age_vars) < 50)
@@ -466,7 +505,7 @@ process_mobile_use_mics <- function(file_names, gender) {
   # Loop over each file name
   for (file in file_names) {
     # Read in the data from the DTA file with selected variables
-    data <- read_sav(file, col_select = selected_vars) %>%
+    data <- read_sav_safe(file, col_select = all_of(selected_vars)) %>%
       mutate(harm = ifelse(max(!!sym(age_var),na.rm = T)< 50, 0, 1),
              sample_size  = n()) %>%
       filter(!!sym(age_var) < 50)
@@ -571,10 +610,10 @@ mb_use_mics <- bind_rows(mb_use_mics_female, mb_use_mics_male) %>%
 # ITU
 
 ```{r}
-setwd(here("data/national/adolescent_modelling/data_refresh/itu"))
+itu_path <- function(f) file.path(ITU_DIR, f)
 
-mob_female <- read_csv("mobile_female.csv", col_select = c("Economy","Value","Year"))
-mob_male <- read_csv("mobile_male.csv", col_select = c("Economy","Value","Year"))
+mob_female <- read_csv(itu_path("mobile_female.csv"), col_select = c("Economy","Value","Year"))
+mob_male <- read_csv(itu_path("mobile_male.csv"), col_select = c("Economy","Value","Year"))
 
 mob_use_itu <- mob_female %>%
   full_join(mob_male, by = "Economy") %>%
@@ -582,8 +621,8 @@ mob_use_itu <- mob_female %>%
   select(-Year.y) %>%
   mutate(survey_type = "itu")
 
-int_female <- read_csv("int_female.csv", col_select = c("Economy","Value","Year"))
-int_male <- read_csv("int_male.csv", col_select = c("Economy","Value","Year"))
+int_female <- read_csv(itu_path("int_female.csv"), col_select = c("Economy","Value","Year"))
+int_male <- read_csv(itu_path("int_male.csv"), col_select = c("Economy","Value","Year"))
 
 int_use_itu <- int_female %>%
   full_join(int_male, by = "Economy") %>%
@@ -710,7 +749,7 @@ full_groundtruth <- int_use %>%
 library(janitor)
 library(readxl)
 
-pop_data <- read_csv(here("data/national/adolescent_modelling/data_refresh/population_data/un_1950_2023_processed.csv"))
+pop_data <- read_csv(UN_POP_PROCESSED, show_col_types = FALSE)
 
 pop_data <- pop_data %>%
   mutate(pop_15_to_49_female = `15_19_f` + `20_24_f` + `25_29_f` + `30_34_f` + `35_39_f` + `40_44_f` + `45_49_f`,
@@ -726,17 +765,40 @@ full_groundtruth <- full_groundtruth %>%
 full_groundtruth_pop <- full_groundtruth %>%
   left_join(pop_data, by = c("iso3","survey_start")) 
 
+# DHS asks "used the internet in the last 12 months"; MICS asks "ever used" and "used in the last
+# 3 months", and India's DHS7 only carries "ever used". `ever -> past 12 months` is the fitted
+# no-intercept, gender-interacted DHS regression from technical_report_data_refresh.qmd; keep the
+# coefficients unrounded, since rounding them to 4 dp moves every converted value by ~3e-5.
+EVER_TO_12M <- list(men = c(slope = 0.994429, intercept = 0.022710),
+                    wom = c(slope = 0.971729, intercept = 0.010679))
+
+ever_to_12m <- function(ever, sex) {
+  EVER_TO_12M[[sex]]["slope"] * ever - EVER_TO_12M[[sex]]["intercept"]
+}
+
 full_groundtruth_update <- full_groundtruth_pop %>%
   mutate(internet_men = case_when(
     str_detect(tolower(survey_type), "dhs") & (iso3 != "IND") ~ perc_used_internet_past12months_wght_age_15_to_49_men,
-    str_detect(tolower(survey_type), "dhs") & (iso3 == "IND") ~ 0.9944*perc_ever_used_internet_wght_age_15_to_49_men - 0.0227,
-    str_detect(tolower(survey_type), "mics") ~ 0.9944*perc_ever_used_internet_wght_age_15_to_49_men - 0.0227),
+    str_detect(tolower(survey_type), "dhs") & (iso3 == "IND") ~ ever_to_12m(perc_ever_used_internet_wght_age_15_to_49_men, "men"),
+    str_detect(tolower(survey_type), "mics") ~ ever_to_12m(perc_ever_used_internet_wght_age_15_to_49_men, "men")),
     internet_wom = case_when(
     str_detect(tolower(survey_type), "dhs") & (iso3 != "IND") ~ perc_used_internet_past12months_wght_age_15_to_49_wom,
-    str_detect(tolower(survey_type), "dhs") & (iso3 == "IND") ~ 0.9717*perc_ever_used_internet_wght_age_15_to_49_wom - 0.0107,
-    str_detect(tolower(survey_type), "mics") ~ 0.9717*perc_ever_used_internet_wght_age_15_to_49_wom - 0.0107),
+    str_detect(tolower(survey_type), "dhs") & (iso3 == "IND") ~ ever_to_12m(perc_ever_used_internet_wght_age_15_to_49_wom, "wom"),
+    str_detect(tolower(survey_type), "mics") ~ ever_to_12m(perc_ever_used_internet_wght_age_15_to_49_wom, "wom")),
     mobile_men = perc_owns_mobile_telephone_wght_age_15_to_49_men,
     mobile_wom = perc_owns_mobile_telephone_wght_age_15_to_49_wom) %>%
+  # 12-month use cannot be below the directly measured 3-month use, but the regression above is
+  # fitted across all of DHS and does not know that, so for high-adoption MICS countries it
+  # predicts *below* MT10. Floor it at the observed 3-month value. This step lived in
+  # technical_report_data_refresh.qmd rather than the production script and was lost when this
+  # file was made self-contained; without it 8 men's and 11 women's MICS values are too low, by up
+  # to 0.031 (Turks and Caicos 2019). See doc/decisions.md D31.
+  mutate(internet_men = ifelse(str_detect(tolower(survey_type), "mics") &
+                                 internet_men < perc_used_internet_past3months_wght_age_15_to_49_men,
+                               perc_used_internet_past3months_wght_age_15_to_49_men, internet_men),
+         internet_wom = ifelse(str_detect(tolower(survey_type), "mics") &
+                                 internet_wom < perc_used_internet_past3months_wght_age_15_to_49_wom,
+                               perc_used_internet_past3months_wght_age_15_to_49_wom, internet_wom)) %>%
   mutate(internet_fm_ratio = internet_wom/internet_men,
          mobile_fm_ratio = mobile_wom/mobile_men) %>%
   rename(year = survey_start)
@@ -745,5 +807,5 @@ selected_groundtruth <- full_groundtruth_update %>%
   filter(survey_type != "itu") %>%
   select(iso3, country, year, survey_type, internet_men, internet_wom, mobile_men, mobile_wom, internet_fm_ratio, mobile_fm_ratio, pop_15_to_49_female, pop_15_to_49_male)
 
-write_csv(selected_groundtruth, here("data/national/data_refresh/update_full_groundtruth.csv"))
+write_csv(selected_groundtruth, GROUNDTRUTH_OUT)
 ```

@@ -18,6 +18,13 @@ RAW = DATA / 'raw'              # -> Dropbox .../new_national_pipeline_files/fil
 PROCESSED = DATA / 'processed'  # -> Dropbox .../new_national_pipeline_files/data
 EXTERNAL = DATA / 'external'    # -> Dropbox dgg_research (upstream fb pipeline)
 
+# UN World Population Prospects. The single-age workbooks live under PROCESSED because they are
+# acquired per refresh, not shipped with the pipeline; the panel the model stages read is the
+# `un_1950_2023_processed.csv` in RAW. See doc/decisions.md D29.
+UN_POP = PROCESSED / 'un_pop'
+UN_POP_RAW = UN_POP / 'raw'
+UN_POP_PROCESSED = RAW / 'un_1950_2023_processed.csv'
+
 OUTPUTS = ROOT / 'outputs'
 FIG = OUTPUTS / 'fig'
 RESULTS = OUTPUTS / 'results'   # -> Dropbox .../new_national_pipeline_files/results
@@ -59,6 +66,16 @@ del_country_contrl = False
 model_folder = '18_plus'  # folder to store the models
 
 SEED = 42  # §9: every randomised step reads this
+
+# Treat parity as the ceiling: a country where women's predicted adoption exceeds men's has no gap
+# against women, so movement above parity is not a widening gap and should not be read as one.
+#
+# Implemented by capping the FEMALE LEVEL at the male level (female* = min(female, male)) rather
+# than capping the GGI itself. The two give the same series — GGI* = min(GGI, 1) — but capping the
+# level keeps GGI* a genuine ratio, so the decomposition identity
+#     delta_log_GGI* = delta_log(female*) + [-delta_log(male)]
+# still holds exactly. Capping the ratio directly would break it. See D25.
+level_ceiling_ctrl = True
 
 # Countries with no Facebook data, excluded from the published series. `dgg_pipeline` and the
 # `origin/pipeline` branch of dgg_research both use CHN (China); the 'CHI' below is Channel Islands
@@ -168,25 +185,38 @@ for age_range in age_lst:
     age_cols_dict[f'{age_range[0]}_{age_range[1]}']=[fb_col,pop_col]
 
 """
+# Project palette, rebuilt 2026-08-05 for colour-vision accessibility (D23).
+# Constructed in OKLCH so every hue sits inside the readable lightness band with enough chroma not
+# to read as grey, then ordered to maximise separation under simulated protanopia and deuteranopia.
+# The previous palette failed both discriminability checks (purple vs blue: ΔE 8.2 normal-vision,
+# 2.8 protan, against floors of 15 and 8); this one reaches 23.3 and 11.2.
 colors = {
-    'light_blue': '#a3d5e4',  # Existing light blue
-    'blue': '#41678d',        # Existing blue
-    'purple': '#7b6785',      # Existing purple
-    'red': '#d18375',         # Existing red
-    'peach': '#efb68d',       # Existing peach
-    'teal': '#6aa2a3',        # New teal color
-    'soft_pink': '#d19cbb',   # New soft pink color
-    'warm_yellow': '#f2c46d'  # New warm yellow color
+    'teal':    '#009F89',
+    'orange':  '#E18528',
+    'purple':  '#6C44A4',
+    'rose':    '#DD7577',
+    'sky':     '#43B2E1',
+    'olive':   '#85861F',
+    'blue':    '#2D72C4',
+    'magenta': '#B53C7F',
 }
+
+# Names used by the older scripts, mapped onto the nearest new hue so they keep resolving.
+colors.update({
+    'light_blue': colors['sky'],
+    'red': colors['rose'],
+    'peach': colors['orange'],
+    'soft_pink': colors['magenta'],
+    'warm_yellow': colors['olive'],
+})
 
 # ====================================================================================================
 # visualisation style (§6) — every figure reads from here, nothing hardcoded inline
 # ====================================================================================================
-# Categorical assignment order for the project palette. Same eight colours as `colors` — the
-# project's look is unchanged — but sequenced so adjacent series stay distinguishable. The dict
-# order fails discriminability (purple vs blue: ΔE 8.2 normal-vision, 2.8 protan, against a floor
-# of 15/8); this order lifts the worst adjacent pair to 19.9 normal / 11.9 protan. See D18.
-plot_color_order = ['light_blue', 'red', 'blue', 'peach', 'teal', 'warm_yellow', 'purple', 'soft_pink']
+# Categorical assignment order: the sequence that maximises the worst adjacent separation under
+# simulated protanopia and deuteranopia. Assign hues in this order and never cycle past the eighth
+# slot — a ninth series folds into "Other", small multiples, or a highlight-plus-context treatment.
+plot_color_order = ['teal', 'orange', 'purple', 'rose', 'sky', 'olive', 'blue', 'magenta']
 
 # Sub-Saharan Africa subregion split used by the trend figures, preserved from
 # analysis/technical_report/trend.qmd. `region2` is the World Bank region, except that

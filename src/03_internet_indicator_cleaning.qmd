@@ -10,9 +10,23 @@ editor: visual
 library(haven)
 library(tidyverse)
 library(here)
-library(rnaturalearth)
-library(rnaturalearthdata)
-full_groundtruth <- read_csv(here("data/national/data_refresh/new_national_pipeline_files/files/groundtruth_offline_predictors_pop.csv"))
+source(here("src", "R_params.R"))
+check_paths()
+
+# The two map chunks under "Data coverage" are optional; they need rnaturalearth, which is not in
+# environment.yml. Set to TRUE after install.packages(c("rnaturalearth", "rnaturalearthdata")).
+DRAW_MAPS <- FALSE
+
+# CONVENTIONS.md §1: data/raw is immutable. This file used to write its inputs back over
+# themselves, which silently re-based every downstream model. Outputs are date-stamped (§3)
+# unless this is flipped deliberately.
+OVERWRITE_SHIPPED <- FALSE
+out_path <- function(name) {
+  if (OVERWRITE_SHIPPED) file.path(RAW, paste0(name, ".csv")) else stamped(name)
+}
+
+full_groundtruth <- read_csv(file.path(RAW, "groundtruth_offline_predictors_pop.csv"),
+                             show_col_types = FALSE)
 ```
 
 ## Filtering
@@ -41,12 +55,14 @@ internet_indicator_without_itu <- internet_indicator %>%
 full_groundtruth <- full_groundtruth %>%
   mutate(perc_used_internet_past12months_wght_fm_perc_ratio = ifelse(survey_type == "itu", perc_used_internet_past12months_wom/perc_used_internet_past12months_men, perc_used_internet_past12months_wght_fm_perc_ratio))
 
-write_csv(full_groundtruth, here("data/national/data_refresh/new_national_pipeline_files/files/groundtruth_offline_predictors_pop.csv"))
+write_csv(full_groundtruth, out_path("groundtruth_offline_predictors_pop"))
 ```
 
 ## Data coverage
 
-```{r}
+```{r, eval = DRAW_MAPS}
+library(rnaturalearth)
+library(rnaturalearthdata)
 world_map <- ne_countries(scale = "medium", returnclass = "sf")
 
 world_map_with_internet <- world_map %>%
@@ -106,13 +122,14 @@ ggplot(data = world_map_with_internet) +
 ## Output
 
 ```{r}
-write_csv(internet_indicator, here("data/national/data_refresh/internet_indicator.csv"))
+write_csv(internet_indicator, out_path("internet_indicator"))
 ```
 
 ## no filter
 
 ```{r}
-full_groundtruth <- read_csv(here("data/national/data_refresh/new_national_pipeline_files/files/groundtruth_offline_predictors.csv"))
+full_groundtruth <- read_csv(file.path(RAW, "groundtruth_offline_predictors.csv"),
+                             show_col_types = FALSE)
 
 internet_indicator <- full_groundtruth %>%
   select(country.x, survey_start, survey_type, iso3, perc_used_internet_past12months_wght_age_15_to_49_men, perc_used_internet_past12months_wght_age_15_to_49_wom, perc_used_internet_past12months_men, perc_used_internet_past12months_wom, perc_used_internet_past12months_wght_fm_perc_ratio) %>%
@@ -139,7 +156,7 @@ internet_indicator <- internet_indicator %>%
   mutate(survey_type = ifelse(iso3 == "CUB", "mics6+itu", survey_type)) %>%
   mutate(survey_type = ifelse(iso3 == "ZMB", "dhs7+itu", survey_type))
 
-write_csv(internet_indicator, here("data/national/data_refresh/new_national_pipeline_files/files/internet_indicator_multipule_years.csv"))
+write_csv(internet_indicator, out_path("internet_indicator_multipule_years"))
 ```
 
 ## clean dataset for Casey
@@ -158,5 +175,5 @@ full_groundtruth_out <- full_groundtruth %>%
          owns_mobile_phone_fm_perc_ratio = owns_mobile_phone_wom/owns_mobile_phone_men)
 
 
-write_csv(full_groundtruth_out, here("data/national/data_refresh/new_national_pipeline_files/files/internet_mobile_indicator_clean.csv"))
+write_csv(full_groundtruth_out, out_path("internet_mobile_indicator_clean"))
 ```

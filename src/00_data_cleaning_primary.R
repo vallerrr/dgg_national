@@ -1,287 +1,181 @@
-##These code are used for unzipping and classifying the original data downloaded. 
-
-##It will not run smoothly within the current directory
-
-##It is just for reference
+# Unzips freshly downloaded DHS / MICS / PMA archives and files them into the folder layout that
+# 02_ground_truth_data_calculation.qmd expects.
+#
+# This runs *before* the rest of the pipeline and only when new survey archives land. It was
+# originally written against a Windows machine (`D:/Study/RA/micro dataset/...`) with `setwd()`
+# between blocks; all of that now resolves through src/R_params.R.
+#
+# IT MOVES AND DELETES FILES IN SHARED DROPBOX. `DRY_RUN` is TRUE by default: every step prints
+# what it would do and touches nothing. Read the plan, then set DRY_RUN <- FALSE and rerun.
+#
+# Run from the project root:  Rscript src/00_data_cleaning_primary.R
 
 library(haven)
 library(tidyverse)
 library(here)
+source(here("src", "R_params.R"))
+check_paths()
 
-zip_files <- list.files(pattern = "\\.zip$")
-for (zip_file in zip_files) {
-  # Unzip files into the current directory
-  unzip(zip_file, exdir = ".") 
+DRY_RUN <- TRUE
+
+# Which download folder to process. Point this at the staging folder holding the new archives;
+# `dhs/wave8+` is where the 2023-2025 refresh landed.
+INBOX <- DHS_WAVE8_PLUS
+
+
+# ---- primitives -----------------------------------------------------------------------------
+# Each wraps one destructive operation so DRY_RUN has a single place to intervene.
+
+say <- function(...) message(if (DRY_RUN) "[dry-run] " else "[apply]   ", ...)
+
+do_unzip <- function(zip, exdir) {
+  say("unzip ", basename(zip), " -> ", exdir)
+  if (!DRY_RUN) unzip(zip, exdir = exdir)
 }
-  
-  # List all files extracted
-  extracted_files <- list.files()
-  
-  # Identify files that are not .dta
-  files_to_remove <- extracted_files[!grepl("\\.DTA$", extracted_files) & !grepl("\\.R$", extracted_files)]
-  
-  # Remove those files
-  file.remove(files_to_remove)
 
+do_remove <- function(paths) {
+  if (!length(paths)) return(invisible(NULL))
+  say("remove ", length(paths), " file(s): ", paste(head(basename(paths), 5), collapse = ", "),
+      if (length(paths) > 5) " ..." else "")
+  if (!DRY_RUN) file.remove(paths)
+}
 
-  
-  # Destination directories
-dest_dir_dhs7_women <- "D:/Study/RA/micro dataset/DHS/DHS7 Women"
-dest_dir_dhs7_men <- "D:/Study/RA/micro dataset/DHS/DHS7 Men"
-dest_dir_dhs8_women <- "D:/Study/RA/micro dataset/DHS/DHS8 Women"
-dest_dir_dhs8_men <- "D:/Study/RA/micro dataset/DHS/DHS8 Men"
-  
-files <- list.files(full.names = TRUE)
-for (file_path in files) {
-  file_name <- basename(file_path)
-  
-  # Determine the destination directory based on the file name
-  if (grepl("IR7", file_name)) {
-    dest_dir <- dest_dir_dhs7_women
-  } else if (grepl("MR7", file_name)) {
-    dest_dir <- dest_dir_dhs7_men
-  } else if (grepl("IR8", file_name)) {
-    dest_dir <- dest_dir_dhs8_women
-  } else if (grepl("MR8", file_name)) {
-    dest_dir <- dest_dir_dhs8_men
-  } else {
-    next # Skip files that do not match the criteria
+do_move <- function(from, to) {
+  say("move ", basename(from), " -> ", to)
+  if (!DRY_RUN) {
+    dir.create(dirname(to), showWarnings = FALSE, recursive = TRUE)
+    if (!file.rename(from, to)) warning("failed to move ", from)
   }
-  
-  # Construct the destination path
-  dest_path <- file.path(dest_dir, file_name)
-  
-  # Move the file
-  file.rename(from = file_path, to = dest_path)
 }
 
-setwd("D:/Study/RA/micro dataset/PMA")
-zip_files <- list.files(pattern = "\\.zip$")
-for (zip_file in zip_files) {
-  # Unzip files into the current directory
-  unzip(zip_file, exdir = ".") 
+
+#' Unzip every archive in `dir` in place and drop everything that is not survey microdata.
+#'
+#' @param dir  folder holding the .zip downloads
+#' @param keep regex of extensions worth keeping (Stata microdata plus the shipped .R readers)
+unpack_archives <- function(dir, keep = "\\.(DTA|R)$") {
+  zips <- list.files(dir, pattern = "\\.zip$", full.names = TRUE)
+  for (z in zips) do_unzip(z, exdir = dir)
+
+  extracted <- list.files(dir, full.names = TRUE, recursive = TRUE)
+  do_remove(extracted[!grepl(keep, extracted, ignore.case = TRUE)])
 }
 
-setwd("D:/Study/RA/micro dataset/MICS")
-zip_files <- list.files(pattern = "\\.zip$")
-for (zip_file in zip_files) {
-  # Unzip files into the current directory
-  unzip(zip_file, exdir = ".") 
-}
-file.remove(zip_files)
 
-files <- list.files(pattern = "SPSS")
-for (file in files) {
-  # Generate the new folder name by removing "SPSS " from the file name
-  new_folder_name <- gsub("SPSS ", "", file)
-  
-  # Remove the file extension to ensure the folder name is clean
-  new_folder_name <- tools::file_path_sans_ext(new_folder_name)
-  
-  # Create the new folder if it doesn't already exist
-  if (!dir.exists(new_folder_name)) {
-    dir.create(new_folder_name)
+# DHS filenames encode the round in the recode letter: IR7/MR7 are wave 7, IR8/MR8 wave 8.
+DHS_ROUND_DIRS <- list(
+  "IR7" = file.path(DHS_WAVE7, "women"), "MR7" = file.path(DHS_WAVE7, "men"),
+  "IR8" = file.path(DHS_WAVE8, "women"), "MR8" = file.path(DHS_WAVE8, "men")
+)
+
+#' Sort DHS microdata into round/sex folders based on the recode tag in the filename.
+sort_dhs_by_round <- function(dir, round_dirs = DHS_ROUND_DIRS) {
+  for (path in list.files(dir, full.names = TRUE, recursive = TRUE)) {
+    tag <- names(round_dirs)[vapply(names(round_dirs),
+                                    function(k) grepl(k, basename(path)), logical(1))]
+    if (!length(tag)) next
+    do_move(path, file.path(round_dirs[[tag[1]]], basename(path)))
   }
-  
-  # Construct the new file path
-  new_file_path <- file.path(new_folder_name, file)
-  
-  # Move the file to the new folder
-  file.rename(from = file, to = new_file_path)
 }
-files <- list.files(pattern = "\\.sav$")
-file.remove(files)
 
 
+# DHS two-letter country codes -> folder names.
+country_codes <- c(AF = "Afghanistan", AL = "Albania", AO = "Angola", AM = "Armenia",
+                   AZ = "Azerbaijan", BD = "Bangladesh", BJ = "Benin", BO = "Bolivia",
+                   BT = "Botswana", BR = "Brazil", BF = "Burkina_Faso", BU = "Burundi",
+                   KH = "Cambodia", CM = "Cameroon", CV = "Cape_Verde",
+                   CF = "Central_African_Republic", TD = "Chad", CO = "Colombia",
+                   KM = "Comoros", CG = "Congo", CD = "Congo_Democratic_Republic",
+                   CI = "Cote_d'Ivoire", DR = "Dominican_Republic", EC = "Ecuador",
+                   EG = "Egypt", ES = "El_Salvador", EK = "Equatorial_Guinea",
+                   ER = "Eritrea", ET = "Ethiopia", GA = "Gabon", GM = "Gambia",
+                   GH = "Ghana", GU = "Guatemala", GN = "Guinea", GY = "Guyana",
+                   HT = "Haiti", HN = "Honduras", IA = "India", ID = "Indonesia",
+                   JO = "Jordan", KK = "Kazakhstan", KE = "Kenya", KY = "Kyrgyz_Republic",
+                   LA = "Lao_People's_Democratic_Republic", LS = "Lesotho",
+                   LB = "Liberia", MD = "Madagascar", MW = "Malawi", MV = "Maldives",
+                   ML = "Mali", MR = "Mauritania", MX = "Mexico", MB = "Moldova",
+                   MA = "Morocco", MZ = "Mozambique", MM = "Myanmar", NM = "Namibia",
+                   NP = "Nepal", NC = "Nicaragua", NI = "Niger", NG = "Nigeria",
+                   OS = "Nigeria_Ondo_State", PK = "Pakistan", PY = "Paraguay",
+                   PE = "Peru", PH = "Philippines", RW = "Rwanda", WS = "Samoa",
+                   ST = "Sao_Tome_and_Principe", SN = "Senegal", SL = "Sierra_Leone",
+                   ZA = "South_Africa", LK = "Sri_Lanka", SD = "Sudan", SZ = "Swaziland",
+                   TJ = "Tajikistan", TZ = "Tanzania", TH = "Thailand", TL = "Timor-Leste",
+                   TG = "Togo", TT = "Trinidad_and_Tobago", TN = "Tunisia", TR = "Turkey",
+                   TM = "Turkmenistan", UG = "Uganda", UA = "Ukraine", UZ = "Uzbekistan",
+                   VN = "Vietnam", YE = "Yemen", ZM = "Zambia", ZW = "Zimbabwe")
 
+#' Move DHS files into per-country folders, keyed on the first two letters of the filename.
+sort_dhs_by_country <- function(base_dir, codes = country_codes) {
+  files <- list.files(base_dir, pattern = "\\.DTA$", full.names = TRUE,
+                      recursive = TRUE, ignore.case = TRUE)
+  for (path in files) {
+    name <- basename(path)
+    country <- codes[substr(name, 1, 2)]
+    if (is.na(country)) {
+      message("no matching country for code ", substr(name, 1, 2), " - ", name)
+      next
+    }
+    folder <- gsub("'", "", gsub(" ", "_", country))
+    do_move(path, file.path(base_dir, folder, name))
+  }
+}
+
+
+#' Normalise the MICS folder names (lowercase, underscores) and flatten the one nested level
+#' the MICS archives ship with.
+tidy_mics_folders <- function(base_dir = MICS_DIR) {
+  for (dir_path in list.dirs(base_dir, full.names = TRUE, recursive = FALSE)) {
+    new_path <- gsub(" ", "_", tolower(dir_path))
+    if (new_path != dir_path) do_move(dir_path, new_path)
+  }
+
+  for (parent in list.dirs(base_dir, full.names = TRUE, recursive = FALSE)) {
+    for (sub in list.dirs(parent, full.names = TRUE, recursive = FALSE)) {
+      for (f in list.files(sub, full.names = TRUE)) {
+        do_move(f, file.path(parent, basename(f)))
+      }
+      say("drop empty folder ", sub)
+      if (!DRY_RUN) unlink(sub, recursive = TRUE)
+    }
+  }
+}
+
+
+#' Which files lack a usable variable — the check 02 repeats before every `process_*` call.
+#'
+#' @return the subset of `file_list` where `variable_name` is absent or entirely NA
 check_files_for_variable <- function(file_list, variable_name) {
-  files_without_variable <- c()  # Initialize an empty vector to store file names
-  
-  # Check each file for the specified variable
+  files_without_variable <- c()
   for (file in file_list) {
-    data <- tryCatch({
-      read_dta(file, n_max = 1000)  # Try to read the first 1000 rows of the file
-    }, error = function(e) {
-      NULL  # Return NULL if there's an error reading the file
-    })
-    
-    # If data is successfully read, check for the variable
+    data <- tryCatch(read_dta(file, n_max = 1000), error = function(e) NULL)
     if (!is.null(data)) {
-      # Check if the variable doesn't exist or only contains NA values
-      if (!variable_name %in% names(data) || all(is.na(data[[variable_name]]), na.rm = FALSE)) {
+      if (!variable_name %in% names(data) || all(is.na(data[[variable_name]]))) {
         files_without_variable <- c(files_without_variable, file)
       }
     }
   }
-  
-  return(files_without_variable)  # Return the vector of file names
-}
-
-setwd(here("data/national/data_refresh/DHS/Continuous DHS"))
-
-list_of_fefiles <- list.files(pattern = "IR", full.names = T)
-list_of_mfiles <- list.files(pattern = "MR", full.names = T)
-
-files_without_v171a <- check_files_for_variable(list_of_fefiles, "v171a")
-files_without_mv171a <- check_files_for_variable(list_of_mfiles, "mv171a")
-
-
-# Base directory where the folders will be created
-base_directory <- here("data/national/data_refresh/DHS/wave8")
-
-country_codes <- c(AF = "Afghanistan", AL = "Albania", AO = "Angola", AM = "Armenia", 
-                   AZ = "Azerbaijan", BD = "Bangladesh", BJ = "Benin", BO = "Bolivia", 
-                   BT = "Botswana", BR = "Brazil", BF = "Burkina_Faso", BU = "Burundi",
-                   KH = "Cambodia", CM = "Cameroon", CV = "Cape_Verde", 
-                   CF = "Central_African_Republic", TD = "Chad", CO = "Colombia", 
-                   KM = "Comoros", CG = "Congo", CD = "Congo_Democratic_Republic", 
-                   CI = "Cote_d'Ivoire", DR = "Dominican_Republic", EC = "Ecuador", 
-                   EG = "Egypt", ES = "El_Salvador", EK = "Equatorial_Guinea", 
-                   ER = "Eritrea", ET = "Ethiopia", GA = "Gabon", GM = "Gambia", 
-                   GH = "Ghana", GU = "Guatemala", GN = "Guinea", GY = "Guyana", 
-                   HT = "Haiti", HN = "Honduras", IA = "India", ID = "Indonesia", 
-                   JO = "Jordan", KK = "Kazakhstan", KE = "Kenya", KY = "Kyrgyz_Republic", 
-                   LA = "Lao_People's_Democratic_Republic", LS = "Lesotho", 
-                   LB = "Liberia", MD = "Madagascar", MW = "Malawi", MV = "Maldives", 
-                   ML = "Mali", MR = "Mauritania", MX = "Mexico", MB = "Moldova", 
-                   MA = "Morocco", MZ = "Mozambique", MM = "Myanmar", NM = "Namibia", 
-                   NP = "Nepal", NC = "Nicaragua", NI = "Niger", NG = "Nigeria", 
-                   OS = "Nigeria_Ondo_State", PK = "Pakistan", PY = "Paraguay", 
-                   PE = "Peru", PH = "Philippines", RW = "Rwanda", WS = "Samoa", 
-                   ST = "Sao_Tome_and_Principe", SN = "Senegal", SL = "Sierra_Leone", 
-                   ZA = "South_Africa", LK = "Sri_Lanka", SD = "Sudan", SZ = "Swaziland", 
-                   TJ = "Tajikistan", TZ = "Tanzania", TH = "Thailand", TL = "Timor-Leste", 
-                   TG = "Togo", TT = "Trinidad_and_Tobago", TN = "Tunisia", TR = "Turkey", 
-                   TM = "Turkmenistan", UG = "Uganda", UA = "Ukraine", UZ = "Uzbekistan", 
-                   VN = "Vietnam", YE = "Yemen", ZM = "Zambia", ZW = "Zimbabwe")
-countries_years <- c(
-  "Afghanistan_2015", "Albania_2017-18", "Angola_2015-16",
-  "Armenia_2015-16", "Bangladesh_2014", "Bangladesh_2017-18",
-  "Benin_2017-18", "Burundi_2016-17", "Cameroon_2018",
-  "Ethiopia_2016", "Gabon_2019-21", "Guatemala_2014-15",
-  "Haiti_2016-17", "Indonesia_2017", "Jordan_2017-18",
-  "Liberia_2019-20", "Malawi_2015-16", "Maldives_2016-17",
-  "Mali_2018", "Mauritania_2019-21", "Myanmar_2015-16",
-  "Nepal_2016", "Nigeria_2018", "Papua_New_Guinea_2016-18",
-  "Philippines_2017", "Sierra_Leone_2019", "South_Africa_2016",
-  "Tajikistan_2017", "Tanzania_2015-16", "Timor-Leste_2016",
-  "Turkey_2018", "Uganda_2016", "Zambia_2018", "Zimbabwe_2015"
-)
-
-
-# Assuming you have a list of DTA files in or below the base directory
-list_of_files <- list.files(path = base_directory, pattern = "\\.DTA$", full.names = TRUE, recursive = TRUE)
-
-# Function to move files based on the first two letters (country code) of their filenames
-move_files_based_on_country_code <- function(file_paths, country_codes, base_dir) {
-  for (file_path in file_paths) {
-    # Extract the filename and the country code (first two characters)
-    file_name <- basename(file_path)
-    country_code <- substr(file_name, 1, 2)
-    
-    # Find the corresponding country name using the country code
-    country_name <- country_codes[country_code]
-    
-    if (!is.na(country_name)) {
-      # Replace spaces and special characters in country names with underscores for folder names
-      folder_name <- gsub(" ", "_", country_name)
-      folder_name <- gsub("'", "", folder_name) # Remove apostrophes
-      
-      # Construct the full path for the target directory
-      target_dir_path <- file.path(base_dir, folder_name)
-      
-      # Create the directory if it doesn't exist
-      if (!dir.exists(target_dir_path)) {
-        dir.create(target_dir_path, recursive = TRUE)
-      }
-      
-      # Construct the full target file path
-      target_file_path <- file.path(target_dir_path, file_name)
-      
-      # Move the file
-      if (!file.rename(file_path, target_file_path)) {
-        cat("Failed to move file:", file_name, "to", target_dir_path, "\n")
-      }
-    } else {
-      cat("No matching country for code:", country_code, "- file name:", file_name, "\n")
-    }
-  }
-}
-
-# Execute the function
-move_files_based_on_country_code(list_of_files, country_codes, base_directory)
-
-# Specify the path to the base directory containing the subfolders
-base_directory <- here("data/national/data_refresh/mics")
-
-# List all subdirectories within the base directory
-subdirectories <- list.dirs(path = base_directory, full.names = TRUE, recursive = FALSE)
-
-# Loop through each subdirectory and rename it to lowercase
-for (dir_path in subdirectories) {
-  # Construct the new directory path with lowercase name
-  new_dir_path <- tolower(dir_path)
-  
-  # Check if the new directory path is different from the original
-  if (new_dir_path != dir_path) {
-    # Rename the directory
-    if (file.rename(dir_path, new_dir_path)) {
-      cat("Renamed:", dir_path, "to", new_dir_path, "\n")
-    } else {
-      cat("Failed to rename:", dir_path, "\n")
-    }
-  }
-}
-
-# Set the working directory to the parent folder
-setwd(here("data/national/data_refresh/mics"))
-
-# List all directories in the current working directory
-directories <- list.dirs(path = ".", full.names = TRUE, recursive = FALSE)
-
-# Loop through each directory and rename it by replacing spaces with underscores
-for (dir in directories) {
-  file.rename(from = dir, to = gsub(" ", "_", dir))
+  files_without_variable
 }
 
 
-# Example list of parent folder paths
-parent_folders <- list.files(path = here("data/national/data_refresh/mics"))
+# ---- what a refresh actually runs -------------------------------------------------------------
+# Uncomment the steps that apply to the batch you just downloaded.
 
-list.dirs(here("data/national/data_refresh/mics/Afghanistan MICS6 Datasets"),recursive = FALSE)
+if (sys.nframe() == 0) {
+  message("INBOX: ", INBOX)
+  message("DRY_RUN = ", DRY_RUN, if (DRY_RUN) "  (nothing will be modified)" else "")
 
-# Function to move files from each subfolder to its parent folder and delete the subfolder
-move_files_to_parent_and_delete_subfolder <- function(parent_folders) {
-  for (parent_folder in parent_folders) {
-  # Identify the subfolder within the parent folder (assuming there's only one)
-  subfolders <- list.dirs(parent_folder, full.names = TRUE, recursive = FALSE)
-    
-    # List all files in the subfolder
-    files_in_subfolder <- list.files(subfolders, full.names = TRUE)
-    
-      file_name <- basename(files_in_subfolder)
-      
-      new_file_path <- file.path(parent_folder, file_name)
-      file.rename(files_in_subfolder, new_file_path)
-      unlink(subfolders, recursive = TRUE)
-  }
+  # unpack_archives(INBOX)
+  # sort_dhs_by_country(INBOX)
+  # tidy_mics_folders()
+
+  # Coverage check on what is already filed, mirroring 02's per-wave guards.
+  ir <- list.files(INBOX, pattern = "IR.*\\.DTA$", recursive = TRUE,
+                   full.names = TRUE, ignore.case = TRUE)
+  mr <- list.files(INBOX, pattern = "MR.*\\.DTA$", recursive = TRUE,
+                   full.names = TRUE, ignore.case = TRUE)
+  message("women's recodes: ", length(ir), " | men's recodes: ", length(mr))
+  if (length(ir)) message("  ", paste(basename(ir), collapse = "\n  "))
 }
-# Apply the function to each parent folder
-
-move_files_to_parent_and_delete_subfolder(parent_folders)
-
-
-
-parent_folder <- here("data/national/data_refresh/mics/Argentina MICS6 Datasets")
-subfolders <- list.dirs(parent_folder, full.names = TRUE, recursive = FALSE)
-subfolders <- subfolders[1]
-subfolders
-# List all files in the subfolder
-files_in_subfolder <- list.files(subfolders, full.names = T)
-
-
-  file_name <- basename(files_in_subfolder)
-  new_file_path <- file.path(parent_folder, file_name)
-  file.rename(files_in_subfolder, new_file_path)
-  unlink(subfolders, recursive = TRUE)
-
