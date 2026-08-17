@@ -12,16 +12,26 @@ Maintainer: jiaxuan.li@sociology.ox.ac.uk
 ├── CONVENTIONS.md        project standards — read this first
 ├── environment.yml
 ├── data/                 symlinks into shared Dropbox (see data/README.md)
-├── src/                  pipeline scripts (00-12), params.py, utils.py
-│   ├── analysis/         result presentation, trend figures, technical report
-│   └── archive/          retired scripts
+├── src/
+│   ├── params.py         all paths, config, the model registry, STYLE
+│   ├── utils.py          shared helpers
+│   ├── plotting.py       the project's chart style
+│   ├── <modules>.py      the pipeline's functions — population, outcomes, predictors,
+│   │                     modelling, model_performance, coherent_ggi, ggi_comparison,
+│   │                     ggi_decomposition, aggregation, prediction, facebook_*
+│   ├── R_params.R, R_utils.R, run_qmd.R
+│   ├── scripts/          not yet converted to functions — still top-level scripts
+│   ├── data_creation/    the R / Quarto survey chain (00-04)
+│   ├── notebooks/        the analysis, one folder per stage (01-05)
+│   └── archive/          retired
 ├── doc/
 │   ├── workflow.md       file map, dependency spine, refresh procedure
 │   ├── modelling.md      which model, on what data, and how it performs
 │   ├── methodology.md    methods narrative, assumptions, limitations
 │   └── decisions.md      data & method decision records
 ├── outputs/
-│   ├── fig/              technical-report figures (committed)
+│   ├── tables/<stage>/   date-stamped CSVs, foldered by the stage that made them
+│   ├── fig/<stage>/      figures, same
 │   └── {results,models,graphs}/   symlinks into Dropbox
 └── logs/
 ```
@@ -57,27 +67,25 @@ They are **exploratory analysis scripts, not idempotent jobs** — top-level cod
 inspection interleaved, meant to be stepped through in an IDE as much as run end to end. Several
 write into shared Dropbox; read the script before running it.
 
-| # | Script | Does | State |
-| --- | --- | --- | --- |
-| 00 | `00_data_cleaning_primary.R` | Unzips and files downloaded survey archives | **runs** — `DRY_RUN = TRUE` by default; it moves and deletes files in shared Dropbox (D30) |
-| 01 | `01_population_data.R` | UN WPP population counts by age and sex, joined onto the ground truth | **runs** |
-| 01_01 | `01_01_un_population_wpp.py` | Rebuilds the full 1950–2023 `un_1950_2023_processed` panel from the WPP raws | **runs** (D29) |
-| 02 | `02_ground_truth_data_calculation.qmd` | Internet/mobile penetration from DHS, MICS, GSMA, ITU + UN population | **runs** |
-| 03 | `03_internet_indicator_cleaning.qmd` | Harmonises the internet indicator, picks one survey per country | **runs** — map chunks need `rnaturalearth` |
-| 04 | `04_data_availability_check.R` | Survey coverage check | R |
-| 05 | `05_outcome_data.py` | Merges both indicators into the modelling outcomes | **runs** |
-| 06 | `06_facebook_data.py` | Yearly FB ratios standardised on UN population | blocked — superseded, source gone (D6) |
-| 07 | `07_facebook_data_monthly.py` | Monthly FB ratios, rolling window | blocked — inputs are Dropbox placeholders (D11) |
-| 08 | `08_background_data_for_model.py` | Year-aligns background predictors, imputes, builds the model matrix | **runs** |
-| 09 | `09_background_data_by_year.py` | Same, forced to one alignment year per run | **runs** |
-| 10 | `10_missing_check.py` | Per-country missingness, drives the imputation exclusion lists | **runs** |
-| 11 | `11_fit_final_models.py` | **Fits the final production models from scratch** + LOCO validation + error betas | **runs** |
-| 11_01 | `11_01_model_performance.py` | **LOCO performance for all ten model variants** + verification against the shipped pickles | **runs** (D37) |
-| 12 | `12_monthly_pred.py` | Monthly predictions from the final model | **runs** |
-| 13 | `13_coherent_ggi.py` | **Coherent GGI** from the predicted female/male levels; country-month, country-year and regional tables | **runs** |
-| 14 | `14_coherent_ggi_comparison.py` | Figure-ready tables for the coherent-vs-direct appendix | **runs** |
-| 15 | `15_coherent_ggi_decomposition.py` | **Exact decomposition** of GGI change into female and male components; typology, weights, regional aggregates | **runs** |
-| 16 | `16_aggregation_methods.py` | **Aggregation audit**: seven regional/global summary methods, coverage audit, difference attribution | **runs** |
+| Stage | Where the analysis is | Functions it calls |
+| --- | --- | --- |
+| **01 data creation** | `src/data_creation/*.R`, `*.qmd` (survey chain) + `notebooks/01_data_creation/` | `population`, `outcomes`, `predictors`, `predictors_by_year`, `missingness` |
+| **02 model fitting** | `notebooks/02_model_fitting/` | `modelling`, `prediction` |
+| **03 model performance** | `notebooks/03_model_performance/` | `model_performance` |
+| **04 coherent GGI** | `notebooks/04_coherent_ggi/` | `coherent_ggi`, `ggi_comparison`, `ggi_decomposition`, `aggregation` |
+| **05 trend analysis** | `notebooks/05_trend_analysis/` | — |
+
+The numbering is the run order and it is the same in three places: the notebook folder, the table
+folder (`outputs/tables/<stage>/`) and the figure folder (`outputs/fig/<stage>/`), so an artefact's
+path names the step that produced it.
+
+`src/` holds **functions only** — no analysis is written at a notebook's top level, and no notebook
+defines what belongs in a module (CONVENTIONS.md §7).
+
+`src/scripts/` holds the seven steps not yet converted to functions — they still run as top-level
+scripts, and they are kept out of `src/` root so that folder's rule stays true rather than
+aspirational. Two of them are blocked for good: `facebook_yearly` (superseded, source gone — D6)
+and `facebook_monthly` (inputs are Dropbox placeholders — D11).
 
 **[doc/workflow.md](doc/workflow.md) is the map** — which file produces which artefact, what
 reads it, the dependency spine, and what a refresh actually requires. Start there.

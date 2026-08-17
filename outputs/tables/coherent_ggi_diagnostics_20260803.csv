@@ -1,3 +1,0 @@
-indicator,n_country_months,corr_coherent_vs_direct,mean_abs_diff_coherent_vs_direct,max_abs_diff_coherent_vs_direct,pct_raw_above_parity,pct_flag_both_saturated,pct_flag_male_saturated,pct_flag_female_zero,n_flag_both_zero,annual_mean_abs_diff_mor_vs_rom,annual_max_abs_diff_mor_vs_rom
-internet,19893,0.9374518808732066,0.03881937269892515,0.419,16.126275574322626,6.806414316593777,3.1669431458301913,1.2315890011561854,1,1.3060264358217783e-05,0.0009254323626793903
-mobile,19893,0.99265949692584,0.007008598678261545,0.124,38.51606092595385,16.8049062484291,4.106972301814708,0.0,0,7.774269935836311e-06,0.0009725469789597652

@@ -51,6 +51,39 @@ UN_POP_PROCESSED = _un_pop_panel(UN_POP_EDITION)
 
 OUTPUTS = ROOT / 'outputs'
 FIG = OUTPUTS / 'fig'
+TABLES = OUTPUTS / 'tables'
+
+# ----------------------------------------------------------------------------------------------------
+# pipeline stages
+# ----------------------------------------------------------------------------------------------------
+# The numbering is the run order, and it is the same in three places: the notebook folders under
+# `src/notebooks/`, the table folders under `outputs/tables/`, and the figure folders under
+# `outputs/fig/`. An artefact's path therefore names the stage that produced it.
+#
+# The analysis code lives in the notebooks; the functions they call live in `src/` (CONVENTIONS §7).
+STAGES = {
+    'data_creation':     '01_data_creation',
+    'model_fitting':     '02_model_fitting',
+    'model_performance': '03_model_performance',
+    'coherent_ggi':      '04_coherent_ggi',
+    'trend_analysis':    '05_trend_analysis',
+}
+
+
+def table_dir(stage, create=True):
+    """`outputs/tables/<stage>/` — where a stage's date-stamped CSVs go"""
+    path = TABLES / STAGES[stage]
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def fig_dir(stage, create=True):
+    """`outputs/fig/<stage>/` — where a stage's figures go"""
+    path = FIG / STAGES[stage]
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
 RESULTS = OUTPUTS / 'results'   # -> Dropbox .../new_national_pipeline_files/results
 MODELS = OUTPUTS / 'models'     # -> Dropbox .../new_national_pipeline_files/models
 GRAPHS = OUTPUTS / 'graphs'     # -> Dropbox .../new_national_pipeline_files/graphs
