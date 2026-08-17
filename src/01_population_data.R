@@ -6,7 +6,7 @@
 #   groundtruth_offline_predictors_pop.csv   ground truth + population  (03_internet_indicator_cleaning)
 # plus files/new_groundtruth_national_data.csv, the long-format outcome file.
 #
-# For the *full* 1950-2023 panel that 13/15/16_*.py read, use 01_01_un_population_wpp.R instead —
+# For the *full* 1950-2023 panel that 13/15/16_*.py read, use 01_01_un_population_wpp.py instead —
 # this script keeps the original narrow scope (recent years, no both-sexes column).
 #
 # Run from the project root:  Rscript src/01_population_data.R
@@ -16,6 +16,7 @@ library(janitor)
 library(readxl)
 library(here)
 source(here("src", "R_params.R"))
+source(here("src", "R_utils.R"))
 check_paths()
 
 # WPP2022 was the edition this script was written against; those workbooks are no longer on
@@ -126,25 +127,15 @@ population <- population %>%
 span <- sprintf("un_pop_%d_%d", min(population$survey_start), max(population$survey_start))
 write_csv(population, out_path(span))
 
-ground_truth_pop <- ground_truth %>%
-  left_join(population, by = c("iso3", "survey_start"))
+# One year rule, shared with 02 and with the Python stages (D32): the survey's own year when the
+# population panel has it, otherwise the latest earlier year. Replaces the original 2022 -> 2021
+# special case, which handled one year and left every later survey unmatched.
+ground_truth_pop <- join_latest_available_year(
+  ground_truth, population, key = "iso3", year = "survey_start", used_year_col = "pop_year")
 
-# Surveys run past the end of the WPP estimates window; carry the last available year forward
-# rather than dropping the row.
-last_year <- max(population$survey_start)
-ground_truth_late <- ground_truth %>%
-  filter(survey_start > last_year)
-
-population_last <- population %>%
-  filter(survey_start == last_year) %>%
-  select(-survey_start)
-
-ground_truth_late_pop <- ground_truth_late %>%
-  left_join(population_last, by = "iso3")
-
-ground_truth_pop <- ground_truth_pop %>%
-  filter(survey_start <= last_year) %>%
-  bind_rows(ground_truth_late_pop)
+carried <- carried_year_report(ground_truth_pop, key = "iso3", year = "survey_start",
+                               used_year_col = "pop_year")
+message("population carried forward for ", nrow(carried), " of ", nrow(ground_truth_pop), " rows")
 
 write_csv(ground_truth_pop,
           if (OVERWRITE_SHIPPED) {

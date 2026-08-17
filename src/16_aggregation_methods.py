@@ -32,6 +32,7 @@ import numpy as np
 import pandas as pd
 
 import params
+import utils
 
 CFG = params.COHERENT_GGI
 INDICATORS = CFG['indicators']
@@ -80,9 +81,10 @@ def load_population():
     18+ population by sex and in total, per country-year
 
     18+ is the age group the national models are fitted on, so this is an age-aligned denominator
-    rather than a stand-in. `population_coverage()` reports where it is unavailable.
+    rather than a stand-in. `population_coverage()` reports where it is unavailable in its own
+    year and what the carry-forward rule (D32) supplies instead.
     """
-    pop = pd.read_csv(params.RAW / 'un_1950_2023_processed.csv',
+    pop = pd.read_csv(params.UN_POP_PROCESSED,
                       usecols=['iso3', 'Year', POP_FEMALE, POP_MALE, POP_TOTAL])
     return pop.rename(columns={'iso3': 'gid_0', 'Year': 'year',
                                POP_FEMALE: 'pop_female', POP_MALE: 'pop_male',
@@ -90,17 +92,31 @@ def load_population():
 
 
 def population_coverage(levels, pop):
-    """which years have an age-aligned denominator at all — the audit the spec asks for"""
+    """
+    which years have an age-aligned denominator, before and after the carry-forward rule
+
+    Two different questions, and reporting only the first made the audit contradict the code:
+    `*_own_year` is whether the UN file has that year itself; `*_effective` is what weighting
+    actually uses after D32 carries the latest earlier year forward. A year can be 0% on the
+    first and 100% on the second — that is precisely the case the `pop_year_used` column names.
+    """
     rows = []
     for year in sorted(levels['year'].unique()):
         need = set(levels.loc[levels['year'] == year, 'gid_0'])
         have = set(pop.loc[(pop['year'] == year) & pop['pop_female'].notna(), 'gid_0'])
+        # what the shared rule delivers: any country with population in that year or earlier
+        carried = set(pop.loc[(pop['year'] <= year) & pop['pop_female'].notna(), 'gid_0'])
+        source_years = pop.loc[pop['gid_0'].isin(need & carried) & (pop['year'] <= year)
+                               & pop['pop_female'].notna(), 'year']
         rows.append({
             'year': year, 'age_group': AGE_GROUP,
             'n_countries_modelled': len(need),
             'n_with_sex_specific_pop': len(need & have),
             'coverage_pct': len(need & have) / len(need) * 100 if need else np.nan,
             'contemporaneous_weighting_possible': len(need & have) == len(need),
+            'n_with_pop_effective': len(need & carried),
+            'coverage_pct_effective': len(need & carried) / len(need) * 100 if need else np.nan,
+            'pop_year_used': int(source_years.max()) if len(source_years) else pd.NA,
         })
     return pd.DataFrame(rows)
 
@@ -109,13 +125,15 @@ def attach_weights(levels, pop, basis):
     """
     join population on one of two bases
 
-    'contemporaneous' uses each year's own population — conceptually right, but unavailable from
-    2025 because the UN file stops at 2024 (doc/data_updates.md).
+    'contemporaneous' uses each year's own population, falling back to the latest earlier year
+    under the shared rule (D32) — so years past the end of the UN file are now weighted on carried
+    population rather than left absent, with `pop_year` recording which year each row used.
     'fixed_2015' applies the base-year structure to every year, which keeps the whole 2015-2025
     window computable on one consistent weighting and is what the decomposition uses (D24).
     """
     if basis == 'contemporaneous':
-        return levels.merge(pop, on=['gid_0', 'year'], how='left')
+        return utils.join_latest_available_year(levels, pop, key='gid_0',
+                                                used_year_col='pop_year')
     base = pop[pop['year'] == BASE_YEAR].drop(columns='year')
     return levels.merge(base, on='gid_0', how='left')
 

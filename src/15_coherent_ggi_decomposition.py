@@ -147,7 +147,7 @@ def load_population():
     adoption change with population composition change, which is not what this decomposition claims
     to measure.
     """
-    pop = pd.read_csv(params.RAW / 'un_1950_2023_processed.csv',
+    pop = pd.read_csv(params.UN_POP_PROCESSED,
                       usecols=['iso3', 'Year', '18_inf_m', '18_inf_f'])
     pop = pop[pop['Year'] == WEIGHT_YEAR]
     return pop.rename(columns={'iso3': 'gid_0', '18_inf_f': 'pop_female', '18_inf_m': 'pop_male'})[

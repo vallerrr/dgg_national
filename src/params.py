@@ -23,7 +23,31 @@ EXTERNAL = DATA / 'external'    # -> Dropbox dgg_research (upstream fb pipeline)
 # `un_1950_2023_processed.csv` in RAW. See doc/decisions.md D29.
 UN_POP = PROCESSED / 'un_pop'
 UN_POP_RAW = UN_POP / 'raw'
-UN_POP_PROCESSED = RAW / 'un_1950_2023_processed.csv'
+
+# Which WPP edition every stage weights with. This is the ONE place it is chosen — 13, 15 and 16
+# all read `UN_POP_PROCESSED`, so switching edition is a one-line change and can never leave two
+# stages on different vintages.
+#
+#   'shipped'  the file that has always been in RAW — WPP2022, 1950-2024 (its 2024 is a copy of
+#              its 2023). Every published figure to date rests on this.
+#   'wpp2024'  the rebuild from 01_01_un_population_wpp.py — WPP2024 estimates, 1950-2023.
+#
+# Switching re-bases every population-weighted regional figure (D16, D24, D27). Population enters
+# only as a *weight*: country-level GGIs do not move at all. See D29 for the size of the revision
+# and D35 for what it actually changed.
+UN_POP_EDITION = 'shipped'
+
+def _un_pop_panel(edition):
+    if edition == 'shipped':
+        return RAW / 'un_1950_2023_processed.csv'
+    matches = sorted(UN_POP.glob(f'un_1950_2023_processed_{edition}_*.csv'))
+    if not matches:
+        raise FileNotFoundError(
+            f'no un_1950_2023_processed_{edition}_<date>.csv in {UN_POP} — '
+            'run src/01_01_un_population_wpp.py first')
+    return matches[-1]
+
+UN_POP_PROCESSED = _un_pop_panel(UN_POP_EDITION)
 
 OUTPUTS = ROOT / 'outputs'
 FIG = OUTPUTS / 'fig'
@@ -76,6 +100,20 @@ SEED = 42  # §9: every randomised step reads this
 #     delta_log_GGI* = delta_log(female*) + [-delta_log(male)]
 # still holds exactly. Capping the ratio directly would break it. See D25.
 level_ceiling_ctrl = True
+
+# The mirror of the ceiling, at the other end. Where the predicted FEMALE level sits exactly on the
+# zero floor, the coherent GGI is 0/male = 0 by construction — it reports the clip, not a gender
+# gap, and no observation can agree with it. Those rows say nothing about the measure's accuracy
+# and everything about the level model's floor (D19), so the validation in 14_/analysis 09_01
+# reports the sample twice: with them and without.
+#
+# In the current sample this is Mali 2018 and Chad 2019 (internet only; no mobile row is affected).
+#
+# READ THIS BEFORE QUOTING THE FILTERED NUMBERS: the exclusion is selected on the *coherent*
+# measure's own failure mode, which the direct prediction does not share. Dropping these rows and
+# then saying "coherent beats direct" is circular. The filtered sample answers only "how does the
+# coherent GGI do where it is defined at all". See D34.
+delete_coherent_zero_ctrl = False
 
 # Countries with no Facebook data, excluded from the published series. `dgg_pipeline` and the
 # `origin/pipeline` branch of dgg_research both use CHN (China); the 'CHI' below is Channel Islands
@@ -153,6 +191,61 @@ FINAL_MODEL = {
 # filename pattern shared by the fitted pickles and by dgg_pipeline's loader
 FINAL_MODEL_FILENAME = '{indicator}_{model_type}_{indicator}_{outcome_var}_full_model.pkl'
 
+# ----------------------------------------------------------------------------------------------------
+# the model variants that exist as fitted pickles, and how each one was actually built
+# ----------------------------------------------------------------------------------------------------
+# Established by matching every shipped pickle's coefficients against a refit, to ~1e-15 (D37).
+# All variants read the SAME file — FINAL_MODEL['dataset'] — and differ in two things only:
+# which rows they keep, and which regressors they use.
+#
+# `keep_itu` is the whole of the sample difference. The panel is named `..._itu_deleted` because an
+# earlier ITU-only file was dropped from it, NOT because it has no ITU rows: 37 of its 108 internet
+# rows and 24 of its 99 mobile rows are ITU.
+#
+# THE `_with_CIS` SUFFIX IS A MISNOMER and the single biggest source of confusion here. It does not
+# select CIS countries. It means "keep the ITU rows", which incidentally brings four CIS countries
+# (AZE, BEL, KAZ, UZB) into the sample — they appear in the panel through ITU rows and nowhere else.
+# The filter is ITU; CIS membership is a side-effect of it.
+_FB = ['fb_18_999_men', 'fb_18_999_wom', 'fb_18_999_r']
+_OFFLINE = ['hdi', 'gdi', 'gdp_pcap', 'year']
+
+MODEL_VARIANTS = {
+    # variant                        spec                     keep ITU rows?   n (internet/mobile)
+    'online':                        dict(spec=_FB,              keep_itu=False),   # 71 / 75
+    'offline':                       dict(spec=_OFFLINE,         keep_itu=False),   # 71 / 75
+    'combined':                      dict(spec=_FB + _OFFLINE,   keep_itu=False),   # 71 / 75
+    'combined_top_shaps_no_fertility': dict(
+        spec=['gggi_ggi', 'se_r', 'hdi', 'gdp_pcap', 'year'] + _FB, keep_itu=False),  # 71 / 75
+    'online_with_CIS':               dict(spec=_FB,              keep_itu=True),    # 108 / 99
+    'offline_with_CIS':              dict(spec=_OFFLINE,         keep_itu=True),    # 108 / 99
+    'combined_with_CIS':             dict(spec=_FB + _OFFLINE,   keep_itu=True),    # 108 / 99  <- PRODUCTION
+    # `_align` variants carry ONE Facebook term, aligned to the outcome being predicted:
+    # `fb_18_999_wom` for the women's level, `fb_18_999_men` for the men's, `fb_18_999_r` for the
+    # ratio. `align=True` means the literal `fb_18_999_r` in `spec` is substituted per outcome.
+    # (`offline_with_CIS_align` has no Facebook term, so it is identical to `offline_with_CIS`.)
+    'online_with_CIS_align':         dict(spec=['fb_18_999_r'],  keep_itu=True, align=True),
+    'offline_with_CIS_align':        dict(spec=_OFFLINE,         keep_itu=True, align=True),
+    'combined_with_CIS_align':       dict(spec=_OFFLINE + ['fb_18_999_r'], keep_itu=True, align=True),
+}
+
+
+def resolve_spec(variant, outcome_var):
+    """
+    the regressors a variant uses for one outcome
+
+    Only the `_align` variants depend on the outcome: they swap the single Facebook term for the
+    one matching the outcome, so the women's level is predicted from the women's audience share
+    rather than from the gender ratio. Every other variant returns its spec unchanged.
+    """
+    cfg = MODEL_VARIANTS[variant]
+    spec = list(cfg['spec'])
+    if cfg.get('align') and outcome_var in ('wom', 'men'):
+        spec = [f'fb_18_999_{outcome_var}' if c == 'fb_18_999_r' else c for c in spec]
+    return spec
+
+# The three bars of the published performance figure are these variants, on the production sample.
+FIGURE_VARIANTS = ['online_with_CIS', 'offline_with_CIS', 'combined_with_CIS']
+
 # ====================================================================================================
 # coherent GGI (src/13_coherent_ggi.py)
 # ====================================================================================================
@@ -170,6 +263,12 @@ COHERENT_GGI = {
     # explicit key so an age-disaggregated series can slot in without changing the grain.
     'age_group': '18_plus',
     'focus_years': [2015, 2020, 2025],
+    # Survey ground truth for the validation panel: the harmonised DHS/MICS outcomes written by
+    # 02_ground_truth_data_calculation.qmd. Glob, so the newest dated run is picked up (§3).
+    'groundtruth_glob': str(EXTERNAL / 'national/adolescent_modelling/update_full_groundtruth_*.csv'),
+    # The fitted panels, used only to split validation rows into in-sample and held-out.
+    'training_panels': PROCESSED / 'combined_data/updated_ground_truth_and_fb',
+    'training_file': 'combined_multiple_years_no_missing_keep_countries_fb_aligned_itu_deleted.csv',
 }
 
 countries_to_exclude_for_imputation = {'mobile': ['ABW', 'AND', 'ASM', 'ATG', 'BMU', 'CHI', 'CSK', 'CUW', 'CYM', 'DDR', 'DMA', 'FRO', 'GIB', 'GRL', 'GUM', 'HKG', 'IMN', 'KNA', 'MAC', 'MAF', 'MCO', 'MNP', 'MSR', 'MTQ', 'NCL', 'NIU', 'NRU', 'PRI', 'PRK', 'PSE', 'PYF', 'SAS', 'SCG', 'SHN', 'SUN', 'SXM', 'TCA', 'TWN', 'VDR', 'VGB', 'VIR', 'XKX', 'XTI', 'XXK', 'YMD', 'YUG'],

@@ -12,6 +12,8 @@ inspected — see `select_trend_countries`.
     python src/14_coherent_ggi_comparison.py
 """
 from datetime import datetime
+from glob import glob
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -187,6 +189,220 @@ def build_trends(annual, selection):
 
 
 # ====================================================================================================
+# F. validation against the survey ground truth
+# ====================================================================================================
+# The GGI series is a model output; the DHS/MICS surveys are the only direct observation of the
+# same quantity. Two caveats travel with every number in this section:
+#
+#   1. AGE. The surveys measure 15-49; the models are fitted and predicted on 18+. Part of any gap
+#      is that mismatch, not model error. It is not correctable here — no 15-49 prediction exists.
+#   2. SAMPLE. Most of these country-years are *in* the fitted panel, so their agreement is fit,
+#      not validation. `in_training` splits them, and the held-out rows (chiefly the 2023-2025
+#      surveys added in the latest refresh) are the ones that carry evidential weight.
+GT_DEFINITIONS = {
+    'coherent_parity': '{ind}_ggi_coherent_parity',
+    'coherent_raw': '{ind}_ggi_coherent_raw',
+    'direct': '{ind}_ggi_direct',
+}
+
+
+def load_groundtruth():
+    """the harmonised survey outcomes, newest dated run"""
+    matches = sorted(glob(CFG['groundtruth_glob']))
+    if not matches:
+        raise FileNotFoundError(f'no file matching {CFG["groundtruth_glob"]} — run '
+                                'src/02_ground_truth_data_calculation.qmd first')
+    gt = pd.read_csv(matches[-1])
+    print(f'ground truth: {Path(matches[-1]).name} ({len(gt)} country-years)')
+    return gt
+
+
+def load_training_keys():
+    """
+    what the final models actually saw, per indicator
+
+    Two levels of "unseen", and they answer different questions. A country-year absent from the
+    panel is still an easy prediction if an earlier survey from the same country was fitted — the
+    model has seen that country's level. A country absent entirely is the harder test.
+
+    Returns (country_year_keys, country_keys) keyed by indicator.
+    """
+    pairs, countries = {}, {}
+    for ind in INDICATORS:
+        panel = pd.read_csv(CFG['training_panels'] / ind / CFG['training_file'],
+                            usecols=['iso3', f'{ind}_year'])
+        pairs[ind] = set(zip(panel['iso3'], panel[f'{ind}_year'].astype(int)))
+        countries[ind] = set(panel['iso3'])
+    return pairs, countries
+
+
+def _flags(gid_0, year, ind, training_keys, training_countries):
+    """the two membership flags, computed the same way for the GGI and the level tables"""
+    return (
+        [(i, y) in training_keys[ind] for i, y in zip(gid_0, year)],
+        [i in training_countries[ind] for i in gid_0],
+    )
+
+
+def build_groundtruth_comparison(annual, groundtruth, training_keys, training_countries):
+    """one row per indicator-definition-country-year, observed against predicted"""
+    rows = []
+    for ind in INDICATORS:
+        obs_col = f'{ind}_fm_ratio'
+        block = groundtruth[['iso3', 'country', 'year', 'survey_type', obs_col]].dropna(subset=[obs_col])
+        merged = block.merge(annual, left_on=['iso3', 'year'], right_on=['gid_0', 'year'],
+                             how='inner', suffixes=('_gt', ''))
+        # Where the predicted female level is exactly on the zero floor, every coherent definition
+        # is 0/male = 0 by construction — the clip, not a gap (D19). Flagged, not dropped here, so
+        # the tables downstream can report the sample both ways (params.delete_coherent_zero_ctrl).
+        zero_floor = merged[f'{ind}_women'] <= CFG['near_zero']
+        seen_year, seen_country = _flags(merged['gid_0'], merged['year'], ind,
+                                         training_keys, training_countries)
+        for name, template in GT_DEFINITIONS.items():
+            rows.append(pd.DataFrame({
+                'indicator': ind, 'definition': name,
+                'gid_0': merged['gid_0'], 'country': merged['country'],
+                'continent': merged['continent'], 'region': merged['region'],
+                'year': merged['year'], 'survey_type': merged['survey_type'],
+                'observed': merged[obs_col], 'predicted': merged[template.format(ind=ind)],
+                'in_training': seen_year, 'country_in_training': seen_country,
+                'zero_floor': zero_floor.to_numpy(),
+            }))
+    out = pd.concat(rows, ignore_index=True)
+    out['error'] = out['predicted'] - out['observed']
+    return out.dropna(subset=['predicted', 'observed'])
+
+
+def build_groundtruth_levels(annual, groundtruth, training_keys, training_countries):
+    """the same comparison on the female and male levels, which is where any ratio error comes from"""
+    rows = []
+    for ind in INDICATORS:
+        # `{ind}_men` names the observed column in the ground truth and the predicted column in
+        # the annual series, so the survey side is renamed before merging rather than relying on
+        # merge suffixes — a collision here reads as perfect agreement.
+        pairs = {'women': (f'{ind}_wom', f'{ind}_women'), 'men': (f'{ind}_men', f'{ind}_men')}
+        block = (groundtruth[['iso3', 'country', 'year', 'survey_type']
+                             + [g for g, _ in pairs.values()]]
+                 .rename(columns={g: f'obs_{sex}' for sex, (g, _) in pairs.items()}))
+        pred_cols = ['gid_0', 'year', 'continent'] + [p for _, p in pairs.values()]
+        merged = block.merge(annual[pred_cols].drop_duplicates(['gid_0', 'year']),
+                             left_on=['iso3', 'year'], right_on=['gid_0', 'year'], how='inner')
+        seen_year, seen_country = _flags(merged['gid_0'], merged['year'], ind,
+                                         training_keys, training_countries)
+        for sex, (_, pred_col) in pairs.items():
+            rows.append(pd.DataFrame({
+                'indicator': ind, 'sex': sex,
+                'gid_0': merged['gid_0'], 'country': merged['country'],
+                'continent': merged['continent'], 'year': merged['year'],
+                'survey_type': merged['survey_type'],
+                'observed': merged[f'obs_{sex}'], 'predicted': merged[pred_col],
+                'in_training': seen_year, 'country_in_training': seen_country,
+            }))
+    out = pd.concat(rows, ignore_index=True)
+    out['error'] = out['predicted'] - out['observed']
+    return out.dropna(subset=['predicted', 'observed'])
+
+
+def _accuracy(frame, value='error', obs='observed', pred='predicted'):
+    """the metric set used for every validation table here"""
+    e = frame[value]
+    # R2 against the 1:1 line, not against a fitted line: 1 - SS(pred - obs) / SS(obs - mean obs).
+    # This is the one that answers "does the model beat just predicting the sample mean", and it
+    # penalises bias and scale error, so it can go negative. `pearson_r` below is the association
+    # alone and stays high even when the predictions are systematically off.
+    ss_res = float((e ** 2).sum())
+    ss_tot = float(((frame[obs] - frame[obs].mean()) ** 2).sum())
+    row = {
+        'n': len(frame),
+        'bias': e.mean(),                       # signed: positive = model above the survey
+        'mae': e.abs().mean(),
+        'rmse': float(np.sqrt((e ** 2).mean())),
+        'r2': 1 - ss_res / ss_tot if ss_tot > 0 else np.nan,
+        'within_0.05': (e.abs() <= 0.05).mean() * 100,
+        'within_0.10': (e.abs() <= 0.10).mean() * 100,
+    }
+    if len(frame) >= 3 and frame[obs].nunique() > 1 and frame[pred].nunique() > 1:
+        row['pearson_r'] = stats.pearsonr(frame[obs], frame[pred])[0]
+        row['spearman_r'] = stats.spearmanr(frame[obs], frame[pred])[0]
+    else:
+        row['pearson_r'] = row['spearman_r'] = np.nan
+    return row
+
+
+def summarise_groundtruth(comparison):
+    """
+    accuracy by indicator and definition, over each sample the reader might reasonably want
+
+    `sample` crosses the training split with the zero-floor filter, and carries the same labels as
+    `summarise_groundtruth_levels()` so the two can be charted side by side. `excl_zero` variants
+    appear only when params.delete_coherent_zero_ctrl is on, and are the answer to "how does the
+    coherent GGI do where it is defined at all" — not to "which definition is better" (D34).
+    """
+    splits = [('all', lambda g: g),
+              ('in_training', lambda g: g[g['in_training']]),
+              ('held_out', lambda g: g[~g['in_training']]),
+              ('held_out_new_country', lambda g: g[~g['country_in_training']])]
+    if params.delete_coherent_zero_ctrl:
+        splits += [('all_excl_zero', lambda g: g[~g['zero_floor']]),
+                   ('in_training_excl_zero', lambda g: g[g['in_training'] & ~g['zero_floor']]),
+                   ('held_out_excl_zero', lambda g: g[~g['in_training'] & ~g['zero_floor']])]
+
+    rows = []
+    for (ind, defn), g in comparison.groupby(['indicator', 'definition']):
+        for label, select in splits:
+            sub = select(g)
+            if len(sub):
+                rows.append({'indicator': ind, 'definition': defn, 'sample': label,
+                             'n_dropped_zero_floor': int(g['zero_floor'].sum())
+                             if label.endswith('_excl_zero') else 0,
+                             **_accuracy(sub)})
+    return pd.DataFrame(rows)
+
+
+def summarise_groundtruth_levels(levels):
+    """accuracy of the predicted levels, by indicator, sex and sample"""
+    splits = [('all', lambda g: g),
+              ('in_training', lambda g: g[g['in_training']]),
+              ('held_out', lambda g: g[~g['in_training']]),
+              ('held_out_new_country', lambda g: g[~g['country_in_training']])]
+    rows = []
+    for (ind, sex), g in levels.groupby(['indicator', 'sex']):
+        for label, select in splits:
+            sub = select(g)
+            if len(sub):
+                rows.append({'indicator': ind, 'sex': sex, 'sample': label, **_accuracy(sub)})
+    return pd.DataFrame(rows)
+
+
+def build_unseen_surveys(comparison, levels):
+    """
+    one row per unseen survey: both indicators' levels and every GGI definition, side by side
+
+    The surveys added in the 2026-08 refresh are the only rows the models never saw, so this is
+    the sheet a reader wants when asking "how did it do on the new data" — country by country,
+    rather than as a summary statistic over 17 points.
+    """
+    held = comparison[~comparison['in_training']]
+    wide = held.pivot_table(index=['indicator', 'gid_0', 'country', 'region', 'year',
+                                   'survey_type', 'country_in_training'],
+                            columns='definition',
+                            values=['observed', 'predicted', 'error']).reset_index()
+    wide.columns = [c[0] if not c[1] else f'{c[0]}_{c[1]}' for c in wide.columns]
+    # `observed` is the survey GGI and does not vary by definition; keep one copy
+    obs = [c for c in wide.columns if c.startswith('observed_')]
+    wide['observed'] = wide[obs[0]]
+    wide = wide.drop(columns=obs)
+
+    lv = (levels[~levels['in_training']]
+          .pivot_table(index=['indicator', 'gid_0', 'year'], columns='sex',
+                       values=['observed', 'predicted']).reset_index())
+    lv.columns = [c[0] if not c[1] else f'{c[0]}_level_{c[1]}' for c in lv.columns]
+
+    out = wide.merge(lv, on=['indicator', 'gid_0', 'year'], how='left')
+    return out.sort_values(['indicator', 'year', 'gid_0'], ignore_index=True)
+
+
+# ====================================================================================================
 # D. regional robustness
 # ====================================================================================================
 def build_regional(annual):
@@ -258,12 +474,27 @@ def main():
     regional, regional_table = build_regional(annual)
     stability = rank_stability(regional_table)
 
+    # Validation runs on `annual_all`, not the common sample: restricting to countries complete
+    # under every definition would drop surveys for no reason that applies here.
+    groundtruth = load_groundtruth()
+    training_keys, training_countries = load_training_keys()
+    gt_comparison = build_groundtruth_comparison(annual_all, groundtruth, training_keys,
+                                                 training_countries)
+    gt_stats = summarise_groundtruth(gt_comparison)
+    gt_levels = build_groundtruth_levels(annual_all, groundtruth, training_keys,
+                                         training_countries)
+    gt_level_stats = summarise_groundtruth_levels(gt_levels)
+    unseen = build_unseen_surveys(gt_comparison, gt_levels)
+
     outputs = {
         'scatter': scatter, 'scatter_stats': scatter_stats,
         'differences': diffs, 'difference_summary': diff_summary,
         'trend_selection': selection, 'trends': trends,
         'regional': regional, 'regional_table': regional_table,
         'rank_stability': stability,
+        'groundtruth': gt_comparison, 'groundtruth_stats': gt_stats,
+        'groundtruth_levels': gt_levels, 'groundtruth_level_stats': gt_level_stats,
+        'unseen_surveys': unseen,
     }
     for name, frame in outputs.items():
         path = OUTDIR / f'{PREFIX}_{name}_{stamp}.csv'
@@ -275,6 +506,13 @@ def main():
     print()
     print('regional rank stability (2025):')
     print(stability.round(4).to_string(index=False))
+
+    print()
+    print('GGI against the survey ground truth (surveys measure 15-49, models predict 18+):')
+    print(gt_stats.round(4).to_string(index=False))
+    print()
+    print('predicted levels against the survey levels:')
+    print(gt_level_stats.round(4).to_string(index=False))
 
 
 if __name__ == '__main__':

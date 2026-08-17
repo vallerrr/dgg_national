@@ -302,3 +302,59 @@ def load_world():
     world = gpd.read_file(params.WORLD_SHP)
     world['iso_a3'] = [adm if iso == '-99' else iso for iso, adm in zip(world['ISO_A3'], world['ADM0_A3'])]
     return world
+
+
+def join_latest_available_year(target, source, key, year='year', used_year_col=None):
+    """
+    attach a year-indexed panel to observations, falling back to the latest available year
+
+    The project's one rule for matching a year (D32): use the source's value for the exact year
+    when it has one, otherwise the most recent *earlier* year for that key; if the source begins
+    after the requested year, use its earliest. Applied identically wherever a year-indexed panel
+    is attached to observations, so the population behind a 2025 survey and the population behind
+    a 2025 regional weight are chosen the same way.
+
+    The year actually used is written to `used_year_col`, so a carried-forward value is never
+    silent — compare it against `year` to find them.
+
+    Args:
+        target: observations to attach to; must carry `key` and `year`.
+        source: year-indexed panel; must carry `key` and `year`, one row per pair.
+        key: column identifying the unit (typically 'iso3' or 'gid_0').
+        year: the year column, present in both.
+        used_year_col: name for the source year actually used; defaults to f'{year}_used'.
+
+    Returns:
+        `target` with the source's remaining columns and `used_year_col` attached. Rows whose key
+        is absent from `source` keep NaN, exactly as a left join would leave them.
+    """
+    used_year_col = used_year_col or f'{year}_used'
+    if source.duplicated([key, year]).any():
+        dup = source[source.duplicated([key, year], keep=False)][[key, year]]
+        raise ValueError(f'source has {len(dup)} duplicated {key}-{year} rows, e.g. '
+                         f'{dup.head(3).to_dict("records")}')
+
+    src = source.rename(columns={year: used_year_col}).sort_values([used_year_col, key])
+    # merge_asof requires the key sorted; `_row` restores the caller's row order afterwards.
+    tgt = target.assign(_row=range(len(target))).sort_values([year, key])
+
+    # backward: the most recent source year at or before the requested one
+    out = pd.merge_asof(tgt, src, left_on=year, right_on=used_year_col, by=key,
+                        direction='backward')
+    # forward: the backstop for requests that predate the source's first year for that key
+    missing = out[used_year_col].isna().to_numpy()
+    if missing.any():
+        fwd = pd.merge_asof(tgt[missing], src, left_on=year, right_on=used_year_col,
+                            by=key, direction='forward')
+        out.loc[missing, fwd.columns] = fwd.to_numpy()
+
+    return out.sort_values('_row').drop(columns='_row').set_index(target.index)
+
+
+def carried_year_report(frame, year='year', used_year_col=None, key='gid_0'):
+    """which rows did not get their own year — the audit that keeps the fallback visible"""
+    used_year_col = used_year_col or f'{year}_used'
+    carried = frame[frame[used_year_col].notna() & (frame[used_year_col] != frame[year])]
+    return (carried[[key, year, used_year_col]]
+            .assign(lag=lambda d: d[year] - d[used_year_col])
+            .sort_values([year, key], ignore_index=True))

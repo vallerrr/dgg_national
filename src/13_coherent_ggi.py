@@ -303,11 +303,10 @@ def load_adult_population():
     """
     18+ population by country-year, for population-weighted regional aggregates
 
-    Only the years the UN file actually covers — later years get no weight rather than a
-    carried-forward guess, so a weighted regional figure is either real or absent.
-    See doc/data_updates.md: this file is a refresh candidate.
+    Returned as the UN file has it; the year a given row actually uses is decided by the shared
+    rule in `build_region_year` (D32). See doc/data_updates.md: this file is a refresh candidate.
     """
-    pop = pd.read_csv(params.RAW / 'un_1950_2023_processed.csv',
+    pop = pd.read_csv(params.UN_POP_PROCESSED,
                       usecols=['iso3', 'Year', '18_inf_m', '18_inf_f'])
     pop['adult_pop'] = pop['18_inf_m'] + pop['18_inf_f']
     return pop.rename(columns={'iso3': 'gid_0', 'Year': 'year'})[['gid_0', 'year', 'adult_pop']]
@@ -315,7 +314,15 @@ def load_adult_population():
 
 def build_region_year(annual):
     """regional means, unweighted and weighted by adult population"""
-    annual = annual.merge(load_adult_population(), on=['gid_0', 'year'], how='left')
+    # One year rule, shared with 02, 01 and 16 (D32): the year's own population when the UN file
+    # has it, otherwise the latest earlier year. Supersedes the earlier choice to leave post-2024
+    # weights absent — `pop_year` makes every carried weight visible instead of implicit.
+    annual = utils.join_latest_available_year(annual, load_adult_population(),
+                                              key='gid_0', used_year_col='pop_year')
+    carried = utils.carried_year_report(annual, used_year_col='pop_year')
+    if len(carried):
+        print(f'adult population carried forward for {len(carried)} country-years '
+              f'({sorted(carried["year"].unique())})')
     measures = [f'{ind}_ggi_{v}' for ind in INDICATORS
                 for v in ('direct', 'coherent_mean_of_ratios', 'coherent_ratio_of_means')]
 

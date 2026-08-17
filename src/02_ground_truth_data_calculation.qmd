@@ -15,6 +15,7 @@ library(tidyverse)
 library(here)
 library(countrycode)
 source(here("src", "R_params.R"))
+source(here("src", "R_utils.R"))
 check_paths()
 
 #' Guard for the positional country/year vectors: stop with the actual file list if the count
@@ -762,8 +763,18 @@ full_groundtruth <- full_groundtruth %>%
                                origin = "country.name",
                                destination = "iso3c"))
 
-full_groundtruth_pop <- full_groundtruth %>%
-  left_join(pop_data, by = c("iso3","survey_start")) 
+# One year rule, shared with every other stage that attaches a year-indexed panel (D32): the
+# survey's own year when the population file has it, otherwise the latest earlier year. `pop_year`
+# records which was used, so a carried value is visible in the output rather than implied.
+full_groundtruth_pop <- join_latest_available_year(
+  full_groundtruth, pop_data, key = "iso3", year = "survey_start", used_year_col = "pop_year")
+
+carried <- carried_year_report(full_groundtruth_pop, key = "iso3", year = "survey_start",
+                               used_year_col = "pop_year")
+if (nrow(carried)) {
+  message("population carried forward for ", nrow(carried), " survey(s):")
+  print(as.data.frame(carried))
+}
 
 # DHS asks "used the internet in the last 12 months"; MICS asks "ever used" and "used in the last
 # 3 months", and India's DHS7 only carries "ever used". `ever -> past 12 months` is the fitted
@@ -805,7 +816,7 @@ full_groundtruth_update <- full_groundtruth_pop %>%
 
 selected_groundtruth <- full_groundtruth_update %>%
   filter(survey_type != "itu") %>%
-  select(iso3, country, year, survey_type, internet_men, internet_wom, mobile_men, mobile_wom, internet_fm_ratio, mobile_fm_ratio, pop_15_to_49_female, pop_15_to_49_male)
+  select(iso3, country, year, survey_type, internet_men, internet_wom, mobile_men, mobile_wom, internet_fm_ratio, mobile_fm_ratio, pop_15_to_49_female, pop_15_to_49_male, pop_year)
 
 write_csv(selected_groundtruth, GROUNDTRUTH_OUT)
 ```
