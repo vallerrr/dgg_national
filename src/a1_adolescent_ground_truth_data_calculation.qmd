@@ -1,0 +1,936 @@
+---
+title: "ground_truth data calculation"
+author: "Jiaxuan Li"
+format: html
+editor: visual
+---
+
+# Calculate DHS
+
+## Set functions
+
+```{r}
+library(haven)
+library(tidyverse)
+library(here)
+library(janitor)
+library(readxl)
+library(countrycode)
+
+process_internet_use <- function(file_names, gender) {
+
+  # Initialize an empty list to store data frames
+  list_of_dataframes_int <- list()
+  
+  # Define selected variables based on gender
+  selected_vars <- if (gender == "male") {
+    c("v000", "v005", "v012", "v171a") %>% 
+      sapply(function(x) ifelse(startsWith(x, "v"), paste0("m", x), x)) %>% 
+      unlist()
+  } else {
+    c("v000", "v005", "v012", "v171a")
+  }
+  
+  # Determine the variable names based on gender
+  internet_use_var <- if (gender == "male") "mv171a" else "v171a"
+  age_var <- if (gender == "male") "mv012" else "v012"
+  weight_var <- if (gender == "male") "mv005" else "v005"
+  
+  # Loop over each file name
+  for (file in file_names) {
+    # Read in the data from the DTA file with selected variables
+    data <- read_dta(file, col_select = selected_vars) %>%
+      filter(!!sym(age_var) >= 15 & !!sym(age_var) < 50)  # Ensure valid age range
+    
+    # Process the data for internet use based on the gender-specific variable
+    processed_data_int <- data %>%
+      mutate(Int_use_in_12 = case_when(
+        (!!sym(selected_vars[1]) == "IA7" & !!sym(internet_use_var) == 3) ~ 1,
+        (!!sym(selected_vars[1]) != "IA7" & !!sym(internet_use_var) == 1) ~ 1,
+        is.na(!!sym(internet_use_var)) ~ NA_real_,
+        TRUE ~ 0
+      )) %>%
+      filter(!is.na(Int_use_in_12))
+    
+    # Compute indicators for different age groups, including sample size
+    processed_data_grouped <- processed_data_int %>%
+      group_by(!!sym(selected_vars[1])) %>%
+      summarise(
+        # [15, 20]
+        Int_use_in_12_15_20 = weighted.mean(
+          Int_use_in_12[!!sym(age_var) >= 15 & !!sym(age_var) <= 20], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 15 & !!sym(age_var) <= 20], 
+          na.rm = TRUE),
+        Internet_sample_size_15_20 = sum(!!sym(age_var) >= 15 & !!sym(age_var) <= 20, na.rm = TRUE),
+
+        # [21, 49]
+        Int_use_in_12_21_49 = weighted.mean(
+          Int_use_in_12[!!sym(age_var) >= 21 & !!sym(age_var) < 50], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 21 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        Internet_sample_size_21_49 = sum(!!sym(age_var) >= 21 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # [15, 24]
+        Int_use_in_12_15_24 = weighted.mean(
+          Int_use_in_12[!!sym(age_var) >= 15 & !!sym(age_var) <= 24], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 15 & !!sym(age_var) <= 24], 
+          na.rm = TRUE),
+        Internet_sample_size_15_24 = sum(!!sym(age_var) >= 15 & !!sym(age_var) <= 24, na.rm = TRUE),
+
+        # [25, 34]
+        Int_use_in_12_25_34 = weighted.mean(
+          Int_use_in_12[!!sym(age_var) >= 25 & !!sym(age_var) <= 34], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 25 & !!sym(age_var) <= 34], 
+          na.rm = TRUE),
+        Internet_sample_size_25_34 = sum(!!sym(age_var) >= 25 & !!sym(age_var) <= 34, na.rm = TRUE),
+
+        # [35, 49]
+        Int_use_in_12_35_49 = weighted.mean(
+          Int_use_in_12[!!sym(age_var) >= 35 & !!sym(age_var) < 50], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 35 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        Internet_sample_size_35_49 = sum(!!sym(age_var) >= 35 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # [25, 49]
+        Int_use_in_12_25_49 = weighted.mean(
+          Int_use_in_12[!!sym(age_var) >= 25 & !!sym(age_var) < 50], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 25 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        Internet_sample_size_25_49 = sum(!!sym(age_var) >= 25 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # Overall sample size
+        Internet_overall_sample_size = n(),
+        .groups = 'drop'
+      )
+    
+    # Store the processed data in the list with the file name as key
+    list_of_dataframes_int[[file]] <- processed_data_grouped
+  }
+  
+  # Combine all data frames into one
+  combined_data_int <- bind_rows(list_of_dataframes_int)
+  
+  return(combined_data_int)
+}
+
+
+##################################################################################
+
+check_files_for_variable <- function(file_list, variable_name) {
+  files_without_variable <- c()  # Initialize an empty vector to store file names
+  
+  # Check each file for the specified variable
+  for (file in file_list) {
+    data <- tryCatch({
+      read_dta(file, n_max = 1000)  # Try to read the first 1000 rows of the file
+    }, error = function(e) {
+      NULL  # Return NULL if there's an error reading the file
+    })
+    
+    # If data is successfully read, check for the variable
+    if (!is.null(data)) {
+      # Check if the variable doesn't exist or only contains NA values
+      if (!variable_name %in% names(data) || all(is.na(data[[variable_name]]), na.rm = FALSE)) {
+        files_without_variable <- c(files_without_variable, file)
+      }
+    }
+  }
+  
+  return(files_without_variable)  # Return the vector of file names
+}
+
+
+
+###################################################################################################
+
+process_mobile_use <- function(file_names, gender) {
+  # Initialize an empty list to store data frames
+  list_of_dataframes <- list()
+  
+  # Define selected variables based on gender
+  selected_vars <- if (gender == "male") {
+    c("v000", "v005", "v012", "v169a") %>% 
+      sapply(function(x) ifelse(startsWith(x, "v"), paste0("m", x), x)) %>% 
+      unlist()
+  } else {
+    c("v000", "v005", "v012", "v169a")
+  }
+  
+  # Define variable names based on gender
+  mobile_use_var <- if (gender == "male") "mv169a" else "v169a"
+  age_var <- if (gender == "male") "mv012" else "v012"
+  weight_var <- if (gender == "male") "mv005" else "v005"
+  
+  # Loop over each file name
+  for (file in file_names) {
+    # Read in the data from the DTA file with selected variables
+    data <- read_dta(file, col_select = selected_vars) %>%
+      filter(!!sym(age_var) >= 15 & !!sym(age_var) < 50)
+    
+    # Process the data for mobile use based on the gender-specific variable
+    processed_data <- data %>%
+      mutate(mobile_use = case_when(
+        !!sym(mobile_use_var) == 1 ~ 1,
+        is.na(!!sym(mobile_use_var)) ~ NA_real_,
+        TRUE ~ 0
+      )) %>%
+      filter(!is.na(mobile_use)) 
+    
+    # Compute indicators for different age groups, including sample size
+    processed_data_grouped <- processed_data %>%
+      group_by(!!sym(selected_vars[1])) %>%
+      summarise(
+        # [15, 20]
+        mobile_use_15_20 = weighted.mean(
+          mobile_use[!!sym(age_var) >= 15 & !!sym(age_var) <= 20], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 15 & !!sym(age_var) <= 20], 
+          na.rm = TRUE),
+        mobile_sample_size_15_20 = sum(!!sym(age_var) >= 15 & !!sym(age_var) <= 20, na.rm = TRUE),
+
+        # [21, 49]
+        mobile_use_21_49 = weighted.mean(
+          mobile_use[!!sym(age_var) >= 21 & !!sym(age_var) < 50], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 21 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        mobile_sample_size_21_49 = sum(!!sym(age_var) >= 21 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # [15, 24]
+        mobile_use_15_24 = weighted.mean(
+          mobile_use[!!sym(age_var) >= 15 & !!sym(age_var) <= 24], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 15 & !!sym(age_var) <= 24], 
+          na.rm = TRUE),
+        mobile_sample_size_15_24 = sum(!!sym(age_var) >= 15 & !!sym(age_var) <= 24, na.rm = TRUE),
+
+        # [25, 34]
+        mobile_use_25_34 = weighted.mean(
+          mobile_use[!!sym(age_var) >= 25 & !!sym(age_var) <= 34], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 25 & !!sym(age_var) <= 34], 
+          na.rm = TRUE),
+        mobile_sample_size_25_34 = sum(!!sym(age_var) >= 25 & !!sym(age_var) <= 34, na.rm = TRUE),
+
+        # [35, 49]
+        mobile_use_35_49 = weighted.mean(
+          mobile_use[!!sym(age_var) >= 35 & !!sym(age_var) < 50], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 35 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        mobile_sample_size_35_49 = sum(!!sym(age_var) >= 35 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # [25, 49]
+        mobile_use_25_49 = weighted.mean(
+          mobile_use[!!sym(age_var) >= 25 & !!sym(age_var) < 50], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 25 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        mobile_sample_size_25_49 = sum(!!sym(age_var) >= 25 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # Overall sample size
+        mobile_overall_sample_size = n(),
+        .groups = 'drop'
+      )
+    
+    # Store the processed data in the list with the file name as key
+    list_of_dataframes[[file]] <- processed_data_grouped
+  }
+  
+  # Combine all data frames into one
+  combined_data <- bind_rows(list_of_dataframes)
+  
+  return(combined_data)
+}
+
+```
+
+## Calculate Int
+
+```{r}
+fefile_list_w7 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave7"), pattern = "IR", recursive = T, full.names = T)
+
+fefile_list_w7_without_int <- check_files_for_variable(fefile_list_w7, "v171a")
+fefile_list_w7 <- fefile_list_w7[!fefile_list_w7 %in% fefile_list_w7_without_int]
+
+fe_dhs_w7_int <- process_internet_use(fefile_list_w7, "female") %>%
+  mutate(gender = "female",
+         survey = "dhs7",
+         country = c("Angola", "Armenia", "Benin", "Burundi", "Cameroon", "Ethiopia", "Gabon", "Guinea", "Haiti", "India", "Indonesia", "Jordan", "Liberia","Malawi","Maldives", "Mali","Mauritania","Nepal", "Nigeria", "Pakistan", "Papua New Guinea", "Philippines", "Sierra Leone","South Africa", "Tajikistan", "Tanzania", "Timor-Leste","Uganda",  "Zambia", "Zimbabwe"),
+         survey_start = c(2015, 2015, 2017, 2016, 2018, 2016, 2019, 2018, 2016, 2019, 2017, 2017, 2019, 2015, 2016, 2018, 2019, 2016, 2018, 2017, 2016, 2017, 2019, 2016, 2017, 2015, 2016, 2016, 2018, 2015),
+         survey_duration = c(2,2,2,2,1,1,3,1,2,3,1,2,2,2,2, 1,3,1,1,2,3,1,1,1,1,2,1,1,1,1))
+
+mfile_list_w7 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave7"), pattern = "MR7", recursive = T, full.names = T)
+mfile_list_w7_without_int <- check_files_for_variable(mfile_list_w7, "mv171a")
+mfile_list_w7 <- mfile_list_w7[!mfile_list_w7 %in% mfile_list_w7_without_int]
+m_dhs_w7_int <- process_internet_use(mfile_list_w7, "male") %>%
+  mutate(gender = "male",
+         survey = "dhs7",
+         country = c("Angola", "Armenia", "Benin", "Burundi", "Cameroon", "Ethiopia", "Gabon", "Guinea", "Haiti", "India", "Indonesia", "Jordan", "Liberia","Malawi","Maldives", "Mali","Mauritania","Nepal", "Nigeria", "Pakistan", "Papua New Guinea", "Sierra Leone","South Africa","Tanzania", "Timor-Leste","Uganda",  "Zambia", "Zimbabwe"),
+         survey_start = c(2015, 2015, 2017, 2016, 2018, 2016, 2019, 2018, 2016, 2019, 2017, 2017, 2019, 2015, 2016, 2018, 2019, 2016, 2018, 2017, 2016, 2019, 2016, 2015, 2016, 2016, 2018, 2015),
+         survey_duration = c(2,2,2,2,1,1,3,1,2,3,1,2,2,2,2, 1,3,1,1,2,3,1,1,2,1,1,1,1))
+
+fefile_list_w8 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave8"), pattern = "IR", recursive = T, full.names = T)
+
+
+fe_dhs_w8_int <- process_internet_use(fefile_list_w8, "female") %>%
+  mutate(country = c("Burkina Faso","Cambodia", "Cote d'Ivoire","Gambia", "Ghana","Kenya", "Lesotho", "Madagascar", "Mozambique", "Nepal","Philippines", "Rwanda", "Tanzania"),
+         survey_start = c(2021, 2021, 2021, 2019, 2022, 2022, 2022, 2021, 2022, 2022, 2022, 2019, 2022),
+         survey_duration = c(1,2,1,2,1,1,2,1,1,1,1,2,1),
+         gender = "female",
+         survey = "dhs8")
+
+mfile_list_w8 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave8"), pattern = "MR8", recursive = T, full.names = T)
+
+m_dhs_w8_int <- process_internet_use(mfile_list_w8, "male") %>%
+  mutate(country = c("Burkina Faso","Cambodia", "Cote d'Ivoire","Gambia", "Ghana","Kenya", "Lesotho", "Madagascar","Mozambique", "Nepal", "Rwanda", "Tanzania"),
+         survey_start = c(2021, 2021, 2021, 2019, 2022, 2022, 2022, 2021, 2022, 2022, 2019, 2022),
+         survey_duration = c(1,2,1,2,1,1,2,1,1,1,2,1),
+         gender = "male",
+         survey = "dhs8")
+
+fefile_list_c <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/continuous"), pattern = "IR", recursive = T, full.names = T)
+
+fefile_list_c_without_int <- check_files_for_variable(fefile_list_c, "v171a")
+fefile_list_c <- fefile_list_c[!fefile_list_c %in% fefile_list_c_without_int]
+
+fe_dhs_c_int <- process_internet_use(fefile_list_c, "female") %>%
+  mutate(country = "Senegal",
+         gender = "female",
+         survey_start = c(2017,2018,2019),
+         survey_duration = c(1,1,1),
+         survey = c("continuous dhs7","continuous dhs8", "continuous dhs8"))
+
+mfile_list_c <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/continuous"), pattern = "MR", recursive = T, full.names = T)
+mfile_list_c_without_int <- check_files_for_variable(mfile_list_c, "mv171a")
+mfile_list_c <- mfile_list_c[!mfile_list_c %in% mfile_list_c_without_int]
+
+m_dhs_c_int <- process_internet_use(mfile_list_c, "male") %>%
+  mutate(country = "Senegal",
+         gender = "male",
+         survey_start = c(2017,2018,2019),
+         survey_duration = c(1,1,1),
+         survey = c("continuous dhs7","continuous dhs8", "continuous dhs8"))
+
+#####New data#############
+fefile_list_new <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/update"), pattern = "IR.*\\.DTA$", recursive = T, full.names = T, ignore.case = T)
+
+fe_dhs_new_int <- process_internet_use(fefile_list_new, "female") %>%
+  mutate(gender = "female",
+         country = c("Angola", "Democratic Republic of the Congo", "Ethiopia", "Jordan",  "Mali", "Malawi", "Nigeria", "Rwanda", "Senegal", "Zambia"),
+         survey_start = c(2023, 2023, 2024, 2023, 2023, 2024, 2024, 2025, 2023, 2024),
+         survey_duration = c(2, 2, 2, 1, 2, 1, 2, 1, 1, 1)) %>%
+  mutate(survey = ifelse(country == "Senegal", "continuous dhs8", "dhs8"),
+         new = 1)
+
+mfile_list_new <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/update"), pattern = "MR.*\\.dta$", recursive = T, full.names = T, ignore.case = T)
+
+m_dhs_new_int <- process_internet_use(mfile_list_new, "male") %>%
+  mutate(gender = "male",
+         country = c("Angola", "Democratic Republic of the Congo", "Ethiopia", "Jordan",  "Mali", "Malawi", "Nigeria", "Rwanda", "Senegal", "Zambia"),
+         survey_start = c(2023, 2023, 2024, 2023, 2023, 2024, 2024, 2025, 2023, 2024),
+         survey_duration = c(2, 2, 2, 1, 2, 1, 2, 1, 1, 1)) %>%
+  mutate(survey = ifelse(country == "Senegal", "continuous dhs8", "dhs8"),
+         new = 1)
+
+
+##Deal with india separately. Covert from "ever use" to "use in 12 months"
+internet_penetration_dhs <- bind_rows(fe_dhs_c_int,fe_dhs_w7_int,fe_dhs_w8_int,m_dhs_c_int,m_dhs_w7_int,m_dhs_w8_int, fe_dhs_new_int, m_dhs_new_int) %>%
+  mutate(v000 = ifelse(is.na(v000),mv000,v000)) %>%
+  select(-mv000) 
+
+internet_penetration_dhs <- internet_penetration_dhs %>%
+  mutate(Int_use_in_12_15_20 = ifelse(v000 == "IA7" & gender == "female", 0.9717*Int_use_in_12_15_20 - 0.0107, Int_use_in_12_15_20),
+         Int_use_in_12_15_20 = ifelse(v000 == "IA7" & gender == "male", 0.9944*Int_use_in_12_15_20 - 0.0227, Int_use_in_12_15_20),
+         Int_use_in_12_15_24 = ifelse(v000 == "IA7" & gender == "female", 0.9717*Int_use_in_12_15_24 - 0.0107, Int_use_in_12_15_24),
+         Int_use_in_12_15_24 = ifelse(v000 == "IA7" & gender == "male", 0.9944*Int_use_in_12_15_24- 0.0227, Int_use_in_12_15_24 ),
+         Int_use_in_12_21_49 = ifelse(v000 == "IA7" & gender == "female", 0.9717*Int_use_in_12_21_49 - 0.0107, Int_use_in_12_21_49),
+         Int_use_in_12_21_49 = ifelse(v000 == "IA7" & gender == "male", 0.9944*Int_use_in_12_21_49 - 0.0227, Int_use_in_12_21_49),
+         Int_use_in_12_25_49 = ifelse(v000 == "IA7" & gender == "female", 0.9717*Int_use_in_12_25_49 - 0.0107, Int_use_in_12_25_49),
+         Int_use_in_12_25_49 = ifelse(v000 == "IA7" & gender == "male", 0.9944*Int_use_in_12_25_49- 0.0227, Int_use_in_12_25_49),
+         Int_use_in_12_25_34 = ifelse(v000 == "IA7" & gender == "female", 0.9717*Int_use_in_12_25_34 - 0.0107, Int_use_in_12_25_34),
+         Int_use_in_12_25_34 = ifelse(v000 == "IA7" & gender == "male", 0.9944*Int_use_in_12_25_34- 0.0227, Int_use_in_12_25_34),
+         Int_use_in_12_35_49 = ifelse(v000 == "IA7" & gender == "female", 0.9717*Int_use_in_12_35_49 - 0.0107, Int_use_in_12_35_49),
+         Int_use_in_12_35_49 = ifelse(v000 == "IA7" & gender == "male", 0.9944*Int_use_in_12_35_49- 0.0227, Int_use_in_12_35_49 ))
+
+```
+
+## Calculate Mob
+
+```{r}
+fefile_list_w7 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave7"), pattern = "IR", recursive = T, full.names = T)
+
+fefile_list_w7_without_mob <- check_files_for_variable(fefile_list_w7, "v169a")
+fefile_list_w7 <- fefile_list_w7[!fefile_list_w7 %in% fefile_list_w7_without_mob]
+fefile_list_w7
+
+fe_dhs_w7_mob <- process_mobile_use(fefile_list_w7, "female") %>%
+  mutate(gender = "female",
+         survey = "dhs7",
+         country = c("Albania", "Angola", "Armenia","Bangladesh", "Benin", "Burundi", "Cameroon", "Ethiopia", "Gabon", "Guinea", "Haiti", "India", "Indonesia", "Jordan", "Liberia","Malawi","Maldives", "Mali","Mauritania","Nepal", "Nigeria", "Pakistan", "Papua New Guinea","Philippines", "Sierra Leone","South Africa","Tajikistan","Tanzania", "Timor-Leste","Uganda",  "Zambia", "Zimbabwe"),
+         survey_start = c(2017, 2015, 2015,2017, 2017, 2016, 2018, 2016, 2019, 2018, 2016, 2019, 2017, 2017, 2019, 2015, 2016, 2018, 2019, 2016, 2018, 2017, 2016,2017, 2019, 2016,2017, 2015, 2016, 2016, 2018, 2015),
+         survey_duration = c(2,2,2,2,2,2,1,1,3,1,2,3,1,2,2,2,2, 1,3,1,1,2,3,1,1,1,1,2,1,1,1,1))
+
+
+fefile_list_w8 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave8"), pattern = "IR", recursive = T, full.names = T)
+fefile_list_w8_without_mob <- check_files_for_variable(fefile_list_w8, "v169a")
+fefile_list_w8 <- fefile_list_w8[!fefile_list_w8 %in% fefile_list_w8_without_mob]
+fe_dhs_w8_mob <- process_mobile_use(fefile_list_w8, "female") %>%
+  mutate(country = c("Burkina Faso","Cambodia", "Cote d'Ivoire","Gambia", "Ghana","Kenya", "Lesotho", "Madagascar","Mozambique", "Nepal","Philippines", "Rwanda", "Tanzania"),
+         survey_start = c(2021, 2021, 2021, 2019, 2022, 2022, 2022, 2021,2022, 2022, 2022, 2019, 2022),
+         survey_duration = c(1,2,1,2,1,1,2,1,1,1,1,2,1),
+         gender = "female",
+         survey = "dhs8")
+
+
+fefile_list_c <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/continuous"), pattern = "IR", recursive = T, full.names = T)
+
+fefile_list_c_without_mob <- check_files_for_variable(fefile_list_c, "v169a")
+fefile_list_c <- fefile_list_c[!fefile_list_c %in% fefile_list_c_without_int]
+
+fe_dhs_c_mob <- process_mobile_use(fefile_list_c, "female") %>%
+  mutate(country = "Senegal",
+         gender = "female",
+         survey_start = c(2017,2018,2019),
+         survey_duration = c(1,1,1),
+         survey = c("continuous dhs7","continuous dhs8", "continuous dhs8"))
+
+mfile_list_w7 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave7"), pattern = "MR7", recursive = T, full.names = T)
+
+mfile_list_w7_without_mob <- check_files_for_variable(mfile_list_w7, "mv169a")
+mfile_list_w7 <- mfile_list_w7[!mfile_list_w7 %in% mfile_list_w7_without_mob]
+
+
+m_dhs_w7_mob <- process_mobile_use(mfile_list_w7, "male") %>%
+  mutate(gender = "male",
+         survey = "dhs7",
+         country = c("Albania", "Angola", "Armenia", "Benin", "Burundi", "Cameroon", "Ethiopia", "Gabon", "Guinea", "Haiti", "India", "Indonesia", "Jordan", "Liberia","Malawi","Maldives", "Mali","Mauritania","Nepal", "Nigeria", "Pakistan", "Papua New Guinea", "Sierra Leone","South Africa","Tanzania", "Timor-Leste","Uganda",  "Zambia", "Zimbabwe"),
+         survey_start = c(2017, 2015, 2015, 2017, 2016, 2018, 2016, 2019, 2018, 2016, 2019, 2017, 2017, 2019, 2015, 2016, 2018, 2019, 2016, 2018, 2017, 2016, 2019, 2016, 2015, 2016, 2016, 2018, 2015),
+         survey_duration = c(2,2,2,2,2,1,1,3,1,2,3,1,2,2,2,2, 1,3,1,1,2,3,1,1,2,1,1,1,1))
+
+mfile_list_w8 <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/wave8"), pattern = "MR8", recursive = T, full.names = T)
+
+m_dhs_w8_mob <- process_mobile_use(mfile_list_w8, "male") %>%
+  mutate(country = c("Burkina Faso","Cambodia", "Cote d'Ivoire","Gambia", "Ghana","Kenya", "Lesotho", "Madagascar","Mozambique", "Nepal", "Rwanda", "Tanzania"),
+         survey_start = c(2021, 2021, 2021, 2019, 2022, 2022, 2022, 2021, 2022, 2022, 2019, 2022),
+         survey_duration = c(1,2,1,2,1,1,2,1,1,1,2,1),
+         gender = "male",
+         survey = "dhs8")
+
+
+mfile_list_c <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/continuous"), pattern = "MR", recursive = T, full.names = T)
+mfile_list_c_without_mob <- check_files_for_variable(mfile_list_c, "mv169a")
+mfile_list_c <- mfile_list_c[!mfile_list_c %in% mfile_list_c_without_mob]
+
+m_dhs_c_mob <- process_mobile_use(mfile_list_c, "male") %>%
+  mutate(country = "Senegal",
+         gender = "male",
+         survey_start = c(2017,2018,2019),
+         survey_duration = c(1,1,1),
+         survey = c("continuous dhs7","continuous dhs8", "continuous dhs8"))
+
+#####New data#############
+fefile_list_new <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/update"), pattern = "IR.*\\.DTA$", recursive = T, full.names = T, ignore.case = T)
+
+fe_dhs_new_mob <- process_mobile_use(fefile_list_new, "female") %>%
+  mutate(gender = "female",
+         country = c("Angola", "Democratic Republic of the Congo", "Ethiopia", "Jordan",  "Mali", "Malawi", "Nigeria", "Rwanda", "Senegal", "Zambia"),
+         survey_start = c(2023, 2023, 2024, 2023, 2023, 2024, 2024, 2025, 2023, 2024),
+         survey_duration = c(2, 2, 2, 1, 2, 1, 2, 1, 1, 1)) %>%
+  mutate(survey = ifelse(country == "Senegal", "continuous dhs8", "dhs8"),
+         new = 1)
+
+mfile_list_new <- list.files(here("data/national/adolescent_modelling/data_refresh/dhs/update"), pattern = "MR.*\\.dta$", recursive = T, full.names = T, ignore.case = T)
+
+m_dhs_new_mob <- process_mobile_use(mfile_list_new, "male") %>%
+  mutate(gender = "male",
+         country = c("Angola", "Democratic Republic of the Congo", "Ethiopia", "Jordan",  "Mali", "Malawi", "Nigeria", "Rwanda", "Senegal", "Zambia"),
+         survey_start = c(2023, 2023, 2024, 2023, 2023, 2024, 2024, 2025, 2023, 2024),
+         survey_duration = c(2, 2, 2, 1, 2, 1, 2, 1, 1, 1)) %>%
+  mutate(survey = ifelse(country == "Senegal", "continuous dhs8", "dhs8"),
+         new = 1)
+
+mobile_ownership_dhs <- bind_rows(fe_dhs_c_mob,fe_dhs_w7_mob,fe_dhs_w8_mob,m_dhs_c_mob,m_dhs_w7_mob,m_dhs_w8_mob, fe_dhs_new_mob, m_dhs_new_mob) %>%
+  mutate(v000 = ifelse(is.na(v000),mv000,v000)) %>%
+  select(-mv000) 
+
+```
+
+# Calculate MICS
+
+## Get dir
+
+```{r}
+list_dir <- list.dirs(here("data/national/adolescent_modelling/data_refresh/mics"), recursive = F, full.names = T)
+
+list_dir
+
+dir_with_mn <- c()
+dir_without_mn <- c()
+
+for (dir in list_dir) {
+  file_list <- list.files(dir, recursive = T, pattern = ".sav",full.names = F)
+  if ("mn.sav" %in% basename(file_list)) {
+    dir_with_mn <- c(dir_with_mn, dir) 
+    } else{
+    
+    dir_without_mn <- c(dir_without_mn, dir)
+    }
+}
+
+##remove ethnic minority of Balkan countries. Remove Thailand 2019, process this later. Remove Pakistan, incomplete.
+list_dir <- dir_with_mn[-c(16,24,29:32,38)]
+
+wm_list <- c()
+for (dir in list_dir) {
+  file <- list.files(dir, recursive = T, pattern = "wm.sav",full.names = T)
+  wm_list <- c(wm_list, file)
+}
+
+m_list <- c()
+for (dir in list_dir) {
+  file <- list.files(dir, recursive = T, pattern = "mn.sav",full.names = T)
+  m_list <- c(m_list, file)
+}
+```
+
+## Set function
+
+```{r}
+check_files_for_variable <- function(file_list, variable_name) {
+  files_without_variable <- c()  # Initialize an empty vector to store file names
+  
+  # Check each file for the specified variable
+  for (file in file_list) {
+    data <- read_sav(file,n_max = 1000)
+    
+    # If data is successfully read, check for the variable
+    if (!is.null(data)) {
+      # Check if the variable doesn't exist or only contains NA values
+      if (!variable_name %in% names(data) || all(is.na(data[[variable_name]]))) {
+        files_without_variable <- c(files_without_variable, file)
+      }
+    }
+  }
+  
+  return(files_without_variable)  # Return the vector of file names
+}
+
+#############################################################################################
+internet_use_mics <- function(file_names, gender) {
+  # Initialize an empty list to store data frames
+  list_of_dataframes_int <- list()
+  
+  # Define selected variables based on gender
+  selected_vars <- if (gender == "male") {
+    c("MMT6C","MMT6F", "MMT9","MMT10","MWB4","mnweight")
+  } else {
+    c("MT6C","MT6F", "MT9","MT10","WB4","wmweight")
+  }
+  
+  # Define variable names based on gender
+  age_var <- if (gender == "male") "MWB4" else "WB4"
+  weight_var <- if (gender == "male") "mnweight" else "wmweight"
+  
+  # Loop over each file name
+  for (file in file_names) {
+    # Read in the data from the SAV file with selected variables
+    data <- read_sav(file, col_select = selected_vars) %>%
+      filter(!!sym(age_var) >= 15 & !!sym(age_var) < 50)  # Ensure valid age range
+    
+    # Process the data for internet use
+    processed_data_int <- data %>%
+      mutate(Int_use = case_when(
+        !!sym(selected_vars[1]) == 1 | !!sym(selected_vars[2]) == 1 | !!sym(selected_vars[3]) == 1 ~ 1,
+        is.na(!!sym(selected_vars[1])) & is.na(!!sym(selected_vars[2])) & is.na(!!sym(selected_vars[3])) ~ NA_real_,
+        TRUE ~ 0
+      )) %>%
+      filter(!is.na(Int_use))
+    
+    # Compute indicators for different age groups, including sample size
+    processed_data_grouped <- processed_data_int %>%
+      summarise(
+        # [15, 20]
+        Int_use_15_20 = weighted.mean(
+          Int_use[!!sym(age_var) >= 15 & !!sym(age_var) <= 20], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 15 & !!sym(age_var) <= 20], 
+          na.rm = TRUE),
+        Internet_sample_size_15_20 = sum(!!sym(age_var) >= 15 & !!sym(age_var) <= 20, na.rm = TRUE),
+
+        # [21, 49]
+        Int_use_21_49 = weighted.mean(
+          Int_use[!!sym(age_var) >= 21 & !!sym(age_var) < 50], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 21 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        Internet_sample_size_21_49 = sum(!!sym(age_var) >= 21 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # [15, 24]
+        Int_use_15_24 = weighted.mean(
+          Int_use[!!sym(age_var) >= 15 & !!sym(age_var) <= 24], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 15 & !!sym(age_var) <= 24], 
+          na.rm = TRUE),
+        Internet_sample_size_15_24 = sum(!!sym(age_var) >= 15 & !!sym(age_var) <= 24, na.rm = TRUE),
+
+        # [25, 34]
+        Int_use_25_34 = weighted.mean(
+          Int_use[!!sym(age_var) >= 25 & !!sym(age_var) <= 34], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 25 & !!sym(age_var) <= 34], 
+          na.rm = TRUE),
+        Internet_sample_size_25_34 = sum(!!sym(age_var) >= 25 & !!sym(age_var) <= 34, na.rm = TRUE),
+
+        # [35, 49]
+        Int_use_35_49 = weighted.mean(
+          Int_use[!!sym(age_var) >= 35 & !!sym(age_var) < 50], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 35 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        Internet_sample_size_35_49 = sum(!!sym(age_var) >= 35 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # [25, 49]
+        Int_use_25_49 = weighted.mean(
+          Int_use[!!sym(age_var) >= 25 & !!sym(age_var) < 50], 
+          pull(processed_data_int, !!sym(weight_var))[!!sym(age_var) >= 25 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        Internet_sample_size_25_49 = sum(!!sym(age_var) >= 25 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # Overall sample size
+        Internet_overall_sample_size = n(),
+        .groups = 'drop'
+      )
+    
+    # Store the processed data in the list with the file name as key
+    list_of_dataframes_int[[file]] <- processed_data_grouped
+  }
+  
+  # Combine all data frames into one
+  combined_data_int <- bind_rows(list_of_dataframes_int)
+  
+  return(combined_data_int)
+}
+
+
+
+
+##############################################################################################
+
+process_mobile_use_mics <- function(file_names, gender) {
+  
+  # Initialize an empty list to store data frames
+  list_of_dataframes <- list()
+  
+  # Define selected variables based on gender
+  selected_vars <- if (gender == "male") {
+    c("MMT11", "MWB4", "mnweight") 
+  } else {
+    c("MT11", "WB4", "wmweight")
+  }
+  
+  # Define variable names based on gender
+  mobile_use_var <- if (gender == "male") "MMT11" else "MT11"
+  age_var <- if (gender == "male") "MWB4" else "WB4"
+  weight_var <- if (gender == "male") "mnweight" else "wmweight"
+  
+  # Loop over each file name
+  for (file in file_names) {
+    # Read in the data from the SAV file with selected variables
+    data <- read_sav(file, col_select = selected_vars) %>%
+      mutate(across(all_of(c(mobile_use_var, weight_var)), as.numeric)) %>%  # Ensure numeric columns
+      filter(!!sym(age_var) >= 15 & !!sym(age_var) < 50)  # Ensure valid age range
+    
+    # Process the data for mobile use
+    processed_data <- data %>%
+      mutate(mb_use = case_when(
+        !!sym(mobile_use_var) == 1 ~ 1,
+        is.na(!!sym(mobile_use_var)) ~ NA_real_,
+        TRUE ~ 0
+      )) %>%
+      filter(!is.na(mb_use))
+    
+    # Compute indicators for different age groups, including sample size
+    processed_data_grouped <- processed_data %>%
+      summarise(
+        # [15, 20]
+        mobile_use_15_20 = weighted.mean(
+          mb_use[!!sym(age_var) >= 15 & !!sym(age_var) <= 20], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 15 & !!sym(age_var) <= 20], 
+          na.rm = TRUE),
+        mobile_sample_size_15_20 = sum(!!sym(age_var) >= 15 & !!sym(age_var) <= 20, na.rm = TRUE),
+
+        # [21, 49]
+        mobile_use_21_49 = weighted.mean(
+          mb_use[!!sym(age_var) >= 21 & !!sym(age_var) < 50], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 21 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        mobile_sample_size_21_49 = sum(!!sym(age_var) >= 21 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # [15, 24]
+        mobile_use_15_24 = weighted.mean(
+          mb_use[!!sym(age_var) >= 15 & !!sym(age_var) <= 24], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 15 & !!sym(age_var) <= 24], 
+          na.rm = TRUE),
+        mobile_sample_size_15_24 = sum(!!sym(age_var) >= 15 & !!sym(age_var) <= 24, na.rm = TRUE),
+
+        # [25, 34]
+        mobile_use_25_34 = weighted.mean(
+          mb_use[!!sym(age_var) >= 25 & !!sym(age_var) <= 34], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 25 & !!sym(age_var) <= 34], 
+          na.rm = TRUE),
+        mobile_sample_size_25_34 = sum(!!sym(age_var) >= 25 & !!sym(age_var) <= 34, na.rm = TRUE),
+
+        # [35, 49]
+        mobile_use_35_49 = weighted.mean(
+          mb_use[!!sym(age_var) >= 35 & !!sym(age_var) < 50], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 35 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        mobile_sample_size_35_49 = sum(!!sym(age_var) >= 35 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # [25, 49]
+        mobile_use_25_49 = weighted.mean(
+          mb_use[!!sym(age_var) >= 25 & !!sym(age_var) < 50], 
+          pull(processed_data, !!sym(weight_var))[!!sym(age_var) >= 25 & !!sym(age_var) < 50], 
+          na.rm = TRUE),
+        mobile_sample_size_25_49 = sum(!!sym(age_var) >= 25 & !!sym(age_var) < 50, na.rm = TRUE),
+
+        # Overall sample size
+        mobile_overall_sample_size = n(),
+        .groups = 'drop'
+      )
+    
+    # Store the processed data in the list with the file name as key
+    list_of_dataframes[[file]] <- processed_data_grouped
+  }
+  
+  # Combine all data frames into one
+  combined_data <- bind_rows(list_of_dataframes)
+  
+  return(combined_data)
+}
+
+```
+
+## Check Variables
+
+```{r}
+wm_without_MT6C <- check_files_for_variable(wm_list,"MT6C")
+wm_without_MT6F <- check_files_for_variable(wm_list,"MT6F")
+wm_without_MT9 <- check_files_for_variable(wm_list,"MT9")
+wm_without_MT10 <- check_files_for_variable(wm_list, "MT10")
+wm_without_MT11 <- check_files_for_variable(wm_list, "MT11")
+wm_without_MT6C
+wm_without_MT6F
+wm_without_MT9
+wm_without_MT10
+wm_without_MT11
+
+m_without_MT6C <- check_files_for_variable(m_list, "MMT6C")
+m_without_MT6F <- check_files_for_variable(m_list, "MMT6F")
+m_without_MT9 <- check_files_for_variable(m_list, "MMT9")
+m_without_MT10 <- check_files_for_variable(m_list, "MMT10")
+m_without_MT11 <- check_files_for_variable(m_list, "MMT11")
+
+m_without_MT6C
+m_without_MT6F
+m_without_MT9
+m_without_MT10
+m_without_MT11
+
+wm_list <- wm_list[!wm_list %in% wm_without_MT9]
+m_list <- m_list[!m_list %in% m_without_MT9]
+```
+
+## Calculate Internet use
+
+```{r}
+intuse_mics_female <- internet_use_mics(wm_list,"female") %>%
+  mutate(country = c("Benin","Central African Republic","Chad","Comoros","Cuba","DRCongo","Eswatini","Fiji","Ghana","Guinea Bissau","Guyana","Kiribati","Lao PDR", "Lao PDR","Lesotho","Madagascar","Malawi","Mongolia","Nauru", "Nepal","Nigeria","Qatar", "Samoa","Sao Tome and Principe","Sierra Leone","Suriname","The Gambia","Togo","Tonga","Tunisia", "Tunisia","Turks and Caicos Islands","Tuvalu","Vanuatu", "Viet Nam","Zimbabwe"),
+         survey = "mics6",
+         survey_start = c("2021","2018","2019","2022","2019","2017","2021","2021","2017","2018","2019","2020","2023", "2017","2018","2018","2019","2018","2023", "2019","2021","2023", "2019","2019","2017","2018","2018","2017","2019","2023", "2018","2019","2019","2023", "2020","2019"),
+         survey_duration = c(2,2,1,1,1,2,2,1,2,2,2,1,1,1,1,1,2,1,1,1,2,1,1,1,1,1,1,1,1,1,1,2,2,1,2,1),
+         gender = "female")
+
+intuse_mics_male <- internet_use_mics(m_list, "male") %>%
+  mutate(country = c("Benin","Central African Republic","Chad","Comoros","Cuba","DRCongo","Eswatini","Fiji","Ghana","Guinea Bissau","Guyana","Kiribati","Lao PDR", "Lao PDR","Lesotho","Madagascar","Malawi","Mongolia","Nauru", "Nepal","Nigeria","Qatar", "Samoa","Sao Tome and Principe","Sierra Leone","Suriname","The Gambia","Togo","Tonga","Tunisia", "Tunisia","Turks and Caicos Islands","Tuvalu","Vanuatu", "Viet Nam","Zimbabwe"),
+         survey = "mics6",
+         survey_start = c("2021","2018","2019","2022","2019","2017","2021","2021","2017","2018","2019","2020","2023", "2017","2018","2018","2019","2018","2023", "2019","2021","2023", "2019","2019","2017","2018","2018","2017","2019","2023", "2018","2019","2019","2023", "2020","2019"),
+         survey_duration = c(2,2,1,1,1,2,2,1,2,2,2,1,1,1,1,1,2,1,1,1,2,1,1,1,1,1,1,1,1,1,1,2,2,1,2,1),
+         gender = "male")
+
+int_use_mics <- bind_rows(intuse_mics_female, intuse_mics_male) %>%
+  mutate(Int_use_in_12_15_20 = ifelse(gender == "female", 0.9717*Int_use_15_20 - 0.0107, 0.9944*Int_use_15_20 - 0.0227),
+         Int_use_in_12_15_24 = ifelse(gender == "female", 0.9717*Int_use_15_24 - 0.0107, 0.9944*Int_use_15_24 - 0.0227),
+         Int_use_in_12_21_49 = ifelse(gender == "female", 0.9717*Int_use_21_49 - 0.0107, 0.9944*Int_use_21_49 - 0.0227),
+         Int_use_in_12_25_49 = ifelse(gender == "female", 0.9717*Int_use_25_49 - 0.0107, 0.9944*Int_use_25_49- 0.0227),
+         Int_use_in_12_25_34 = ifelse(gender == "female", 0.9717*Int_use_25_34 - 0.0107, 0.9944*Int_use_25_34- 0.0227),
+         Int_use_in_12_35_49 = ifelse(gender == "female", 0.9717*Int_use_35_49 - 0.0107, 0.9944*Int_use_35_49- 0.0227)) %>%
+  select(-matches("Int_use_15|Int_use_21|Int_use_25|Int_use_35")) %>%
+  mutate(survey_start = as.numeric(survey_start))
+
+```
+
+## Calculate Mobile use
+
+```{r}
+mb_use_mics_female <- process_mobile_use_mics(wm_list,"female") %>%
+  mutate(country = c("Benin","Central African Republic","Chad","Comoros","Cuba","DRCongo","Eswatini","Fiji","Ghana","Guinea Bissau","Guyana","Kiribati","Lao PDR", "Lao PDR","Lesotho","Madagascar","Malawi","Mongolia","Nauru", "Nepal","Nigeria","Qatar", "Samoa","Sao Tome and Principe","Sierra Leone","Suriname","The Gambia","Togo","Tonga","Tunisia", "Tunisia","Turks and Caicos Islands","Tuvalu","Vanuatu", "Viet Nam","Zimbabwe"),
+         survey = "mics6",
+         survey_start = c("2021","2018","2019","2022","2019","2017","2021","2021","2017","2018","2019","2020","2023", "2017","2018","2018","2019","2018","2023", "2019","2021","2023", "2019","2019","2017","2018","2018","2017","2019","2023", "2018","2019","2019","2023", "2020","2019"),
+         survey_duration = c(2,2,1,1,1,2,2,1,2,2,2,1,1,1,1,1,2,1,1,1,2,1,1,1,1,1,1,1,1,1,1,2,2,1,2,1),
+         gender = "female")
+
+
+mb_use_mics_male <- process_mobile_use_mics(m_list,"male") %>%
+  mutate(country = c("Benin","Central African Republic","Chad","Comoros","Cuba","DRCongo","Eswatini","Fiji","Ghana","Guinea Bissau","Guyana","Kiribati","Lao PDR", "Lao PDR","Lesotho","Madagascar","Malawi","Mongolia","Nauru", "Nepal","Nigeria","Qatar", "Samoa","Sao Tome and Principe","Sierra Leone","Suriname","The Gambia","Togo","Tonga","Tunisia", "Tunisia","Turks and Caicos Islands","Tuvalu","Vanuatu", "Viet Nam","Zimbabwe"),
+         survey = "mics6",
+         survey_start = c("2021","2018","2019","2022","2019","2017","2021","2021","2017","2018","2019","2020","2023", "2017","2018","2018","2019","2018","2023", "2019","2021","2023", "2019","2019","2017","2018","2018","2017","2019","2023", "2018","2019","2019","2023", "2020","2019"),
+         survey_duration = c(2,2,1,1,1,2,2,1,2,2,2,1,1,1,1,1,2,1,1,1,2,1,1,1,1,1,1,1,1,1,1,2,2,1,2,1),
+         gender = "male")
+
+mb_use_mics <- bind_rows(mb_use_mics_female, mb_use_mics_male) %>%
+  mutate(survey_start = as.numeric(survey_start))
+```
+
+# Combine data
+
+```{r}
+
+int_combined <- bind_rows(internet_penetration_dhs, int_use_mics) %>%
+  select(-v000) %>%
+  pivot_wider(
+    names_from = gender, 
+    values_from = -c(gender, country, survey_start, survey_duration, survey),
+    names_glue = "{.value}_{gender}"
+  )
+
+int_combined <- int_combined %>%
+  rename_with(~ case_when(
+    # Rename Internet Use Columns
+    str_detect(., "_male$") & str_detect(., "Int_use_in_12") ~ 
+      str_replace(., "Int_use_in_12", "internet_men") %>% str_replace("_male$", ""),
+    
+    str_detect(., "_female$") & str_detect(., "Int_use_in_12") ~ 
+      str_replace(., "Int_use_in_12", "internet_women") %>% str_replace("_female$", ""),
+    
+    # Rename Sample Size Columns
+    str_detect(., "_male$") & str_detect(., "Internet_sample_size") ~ 
+      str_replace(., "Internet_sample_size", "internet_men") %>% str_replace("_male$", "_sample_size"),
+    
+    str_detect(., "_female$") & str_detect(., "Internet_sample_size") ~ 
+      str_replace(., "Internet_sample_size", "internet_women") %>% str_replace("_female$", "_sample_size"),
+    
+    TRUE ~ .
+  )) %>%
+  rename(internet_overall_sample_size_female = Internet_overall_sample_size_female,
+         internet_overall_sample_size_male = Internet_overall_sample_size_male) %>%
+  mutate(internet_fm_ratio_15_20 = internet_women_15_20/internet_men_15_20,
+         internet_fm_ratio_15_24 = internet_women_15_24/internet_men_15_24,
+         internet_fm_ratio_21_49 = internet_women_21_49/internet_men_21_49,
+         internet_fm_ratio_25_49 = internet_women_25_49/internet_men_25_49,
+         internet_fm_ratio_25_34 = internet_women_25_34/internet_men_25_34,
+         internet_fm_ratio_35_49 = internet_women_35_49/internet_men_35_49)
+
+
+
+mob_combined <- bind_rows(mobile_ownership_dhs, mb_use_mics) %>%
+  select(-v000) %>%
+  pivot_wider(
+    names_from = gender, 
+    values_from = -c(gender, country, survey_start, survey_duration, survey),
+    names_glue = "{.value}_{gender}"
+  )
+
+mob_combined <- mob_combined %>%
+  rename_with(~ case_when(
+    # Rename Mobile Use Columns
+    str_detect(., "_male$") & str_detect(., "mobile_use") ~ 
+      str_replace(., "mobile_use", "mobile_men") %>% str_replace("_male$", ""),
+    
+    str_detect(., "_female$") & str_detect(., "mobile_use") ~ 
+      str_replace(., "mobile_use", "mobile_women") %>% str_replace("_female$", ""),
+    
+    # Rename Sample Size Columns
+    str_detect(., "_male$") & str_detect(., "mobile_sample_size") ~ 
+      str_replace(., "mobile_sample_size", "mobile_men") %>% str_replace("_male$", "_sample_size"),
+    
+    str_detect(., "_female$") & str_detect(., "mobile_sample_size") ~ 
+      str_replace(., "mobile_sample_size", "mobile_women") %>% str_replace("_female$", "_sample_size"),
+    
+    TRUE ~ .
+  )) %>%
+  mutate(mobile_fm_ratio_15_20 = mobile_women_15_20/mobile_men_15_20,
+         mobile_fm_ratio_15_24 = mobile_women_15_24/mobile_men_15_24,
+         mobile_fm_ratio_21_49 = mobile_women_21_49/mobile_men_21_49,
+         mobile_fm_ratio_25_49 = mobile_women_25_49/mobile_men_25_49,
+         mobile_fm_ratio_25_34 = mobile_women_25_34/mobile_men_25_34,
+         mobile_fm_ratio_35_49 = mobile_women_35_49/mobile_men_35_49)
+```
+
+# Population data
+
+```{r}
+pop_data <- read_csv(here("data/national/adolescent_modelling/data_refresh/population_data/un_1950_2023_processed.csv"))
+
+pop_data <- pop_data %>%
+  mutate(
+    pop_15_to_49_female = `15_19_f` + `20_24_f` + `25_29_f` +
+                          `30_34_f` + `35_39_f` + `40_44_f` +
+                          `45_49_f`,
+    pop_15_to_49_male = `15_19_m` + `20_24_m` + `25_29_m` +
+                        `30_34_m` + `35_39_m` + `40_44_m` +
+                        `45_49_m`,
+    pop_15_to_20_female = `15_19_f` + (`20_24_f` / 5),
+    pop_15_to_20_male = `15_19_m` + (`20_24_m` / 5),
+    pop_15_to_24_female = `15_19_f` + `20_24_f`,
+    pop_15_to_24_male = `15_19_m` + `20_24_m`,
+    pop_21_to_49_female = (`20_24_f` * 4/5) +
+                          `25_29_f` + `30_34_f` +
+                          `35_39_f` + `40_44_f` +
+                          `45_49_f`,
+    pop_21_to_49_male = (`20_24_m` * 4/5) +
+                        `25_29_m` + `30_34_m` +
+                        `35_39_m` + `40_44_m` +
+                        `45_49_m`,
+    pop_25_to_49_female = `25_29_f` + `30_34_f` +
+                          `35_39_f` + `40_44_f` +
+                          `45_49_f`,
+
+    pop_25_to_49_male = `25_29_m` + `30_34_m` +
+                        `35_39_m` + `40_44_m` +
+                        `45_49_m`,
+    pop_25_to_34_female = `25_29_f` + `30_34_f`,
+    pop_25_to_34_male = `25_29_m` + `30_34_m`,
+    pop_35_to_49_female = `35_39_f` + `40_44_f` + `45_49_f`,
+    pop_35_to_49_male = `35_39_m` + `40_44_m` + `45_49_m`
+  ) %>%
+  rename(survey_start = Year) %>%
+  select(
+    iso3,
+    survey_start,
+    pop_15_to_49_female,
+    pop_15_to_49_male,
+    pop_15_to_20_female,
+    pop_15_to_20_male,
+    pop_15_to_24_female,
+    pop_15_to_24_male,
+    pop_21_to_49_female,
+    pop_21_to_49_male,
+    pop_25_to_49_female,
+    pop_25_to_49_male,
+    pop_25_to_34_female,
+    pop_25_to_34_male,
+    pop_35_to_49_female,
+    pop_35_to_49_male
+  )
+
+
+int_combined <- int_combined %>%
+  mutate(iso3 = countrycode(country, origin = "country.name", destination = "iso3c")) %>%
+  select(-country)
+
+mob_combined <- mob_combined %>%
+  mutate(iso3 = countrycode(country, origin = "country.name", destination = "iso3c")) %>%
+  select(-country)
+
+
+int_full <- int_combined %>%
+  left_join(pop_data, by = c("iso3", "survey_start"))
+
+mob_full <- mob_combined %>%
+  left_join(pop_data, by = c("iso3", "survey_start"))
+
+write_csv(int_full, here("data/national/adolescent_modelling/internet_adolescent_updated.csv"))
+
+write_csv(mob_full, here("data/national/adolescent_modelling/mobile_adolescent_updated.csv"))
+```
