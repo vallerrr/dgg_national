@@ -22,7 +22,8 @@ Maintainer: jiaxuan.li@sociology.ox.ac.uk
 │   ├── R_params.R, R_utils.R, run_qmd.R
 │   ├── scripts/          not yet converted to functions — still top-level scripts
 │   ├── data_creation/    the R / Quarto survey chain (00-04)
-│   ├── notebooks/        the analysis, one folder per stage (01-05)
+│   ├── technical_report/ the report .qmd sources
+│   ├── analysis_notebooks/   the analysis, flat and numbered from 00
 │   └── archive/          retired
 ├── doc/
 │   ├── workflow.md       file map, dependency spine, refresh procedure
@@ -67,25 +68,25 @@ They are **exploratory analysis scripts, not idempotent jobs** — top-level cod
 inspection interleaved, meant to be stepped through in an IDE as much as run end to end. Several
 write into shared Dropbox; read the script before running it.
 
-| Stage | Where the analysis is | Functions it calls |
+| # | Notebook | Calls |
 | --- | --- | --- |
-| **01 data creation** | `src/data_creation/*.R`, `*.qmd` (survey chain) + `notebooks/01_data_creation/` | `population`, `outcomes`, `predictors`, `predictors_by_year`, `missingness` |
-| **02 model fitting** | `notebooks/02_model_fitting/` | `modelling`, `prediction` |
-| **03 model performance** | `notebooks/03_model_performance/` | `model_performance` |
-| **04 coherent GGI** | `notebooks/04_coherent_ggi/` | `coherent_ggi`, `ggi_comparison`, `ggi_decomposition`, `aggregation` |
-| **05 trend analysis** | `notebooks/05_trend_analysis/` | — |
+| 00 | `00_data_creation.ipynb` | `population` |
+| 01 | `01_fit_final_models.ipynb` | `modelling` |
+| 02 | `02_model_performance.ipynb` | `model_performance` |
+| 03 | `03_unseen_survey_validation.ipynb` | reads 02 |
+| 04 | `04_coherent_ggi_figures.ipynb` | `coherent_ggi` |
+| 05 | `05_coherent_ggi_comparison.ipynb` | `ggi_comparison` |
+| 06 | `06_coherent_ggi_decomposition.ipynb` | `ggi_decomposition` |
+| 07 | `07_aggregation_methods.ipynb` | `aggregation` |
+| 08–12 | trend, adolescent, supplementary | imported analyses (D20) |
 
-The numbering is the run order and it is the same in three places: the notebook folder, the table
-folder (`outputs/tables/<stage>/`) and the figure folder (`outputs/fig/<stage>/`), so an artefact's
-path names the step that produced it.
+**A notebook builds its own results and visualises them.** It calls functions from `src/`; it reads
+from disk only what an *earlier* notebook produced. Each writes to `outputs/tables/<notebook>/` and
+`outputs/fig/<notebook>/`, so an artefact's folder is the notebook that made it.
 
-`src/` holds **functions only** — no analysis is written at a notebook's top level, and no notebook
-defines what belongs in a module (CONVENTIONS.md §7).
-
-`src/scripts/` holds the seven steps not yet converted to functions — they still run as top-level
-scripts, and they are kept out of `src/` root so that folder's rule stays true rather than
-aspirational. Two of them are blocked for good: `facebook_yearly` (superseded, source gone — D6)
-and `facebook_monthly` (inputs are Dropbox placeholders — D11).
+`src/` root holds **functions only**. `src/scripts/` holds the seven steps not yet converted —
+they still run as top-level scripts, kept separate so that rule stays true rather than aspirational.
+Two are blocked for good: `facebook_yearly` (D6) and `facebook_monthly` (D11).
 
 **[doc/workflow.md](doc/workflow.md) is the map** — which file produces which artefact, what
 reads it, the dependency spine, and what a refresh actually requires. Start there.

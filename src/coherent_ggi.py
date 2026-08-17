@@ -30,8 +30,9 @@ import utils
 
 CFG = params.COHERENT_GGI
 INDICATORS = CFG['indicators']
-STAGE = 'coherent_ggi'
-OUTDIR = params.table_dir(STAGE)  # outputs/tables/<stage>/ — the path names the step
+# the notebook that owns this module's output, so the folder names its producer
+NOTEBOOK = '04_coherent_ggi_figures'
+OUTDIR = params.table_dir(NOTEBOOK)  # outputs/tables/<stage>/ — the path names the step
 
 NEAR_ZERO = CFG['near_zero']
 TOL = CFG['tolerance']

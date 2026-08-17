@@ -36,8 +36,12 @@ import utils
 
 CFG = params.COHERENT_GGI
 INDICATORS = CFG['indicators']
-STAGE = 'coherent_ggi'
-OUTDIR = params.table_dir(STAGE)  # outputs/tables/<stage>/ — the path names the step
+# the notebook that owns this module's output, so the folder names its producer
+NOTEBOOK = '07_aggregation_methods'
+OUTDIR = params.table_dir(NOTEBOOK)   # what this notebook writes — the folder names its producer
+# What it reads: the coherent-GGI series, built by 04_coherent_ggi_figures. An input from an
+# earlier stage is read from disk; this notebook's own results are built, not read back.
+INDIR = params.table_dir('04_coherent_ggi_figures')
 PREFIX = 'aggregation'
 
 TREND_START, TREND_END = 2015, 2025      # 2026 is partial (D18)
@@ -65,7 +69,7 @@ METHOD_LABEL = {
 # inputs
 # ====================================================================================================
 def latest(stem):
-    matches = sorted(OUTDIR.glob(f'{stem}_*.csv'))
+    matches = sorted(INDIR.glob(f'{stem}_*.csv'))
     if not matches:
         raise FileNotFoundError(f'no {stem}_*.csv — run src/13_coherent_ggi.py first')
     return pd.read_csv(matches[-1])

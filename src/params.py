@@ -54,36 +54,28 @@ FIG = OUTPUTS / 'fig'
 TABLES = OUTPUTS / 'tables'
 
 # ----------------------------------------------------------------------------------------------------
-# pipeline stages
+# per-notebook output folders
 # ----------------------------------------------------------------------------------------------------
-# The numbering is the run order, and it is the same in three places: the notebook folders under
-# `src/notebooks/`, the table folders under `outputs/tables/`, and the figure folders under
-# `outputs/fig/`. An artefact's path therefore names the stage that produced it.
-#
-# The analysis code lives in the notebooks; the functions they call live in `src/` (CONVENTIONS §7).
-STAGES = {
-    'data_creation':     '01_data_creation',
-    'model_fitting':     '02_model_fitting',
-    'model_performance': '03_model_performance',
-    'coherent_ggi':      '04_coherent_ggi',
-    'trend_analysis':    '05_trend_analysis',
-}
-
-
-def table_dir(stage, create=True):
-    """`outputs/tables/<stage>/` — where a stage's date-stamped CSVs go"""
-    path = TABLES / STAGES[stage]
+# An artefact's folder is the notebook that produced it: `05_coherent_ggi_comparison.ipynb` writes
+# to `outputs/tables/05_coherent_ggi_comparison/` and `outputs/fig/05_coherent_ggi_comparison/`.
+# Each notebook sets NOTEBOOK = '<its own stem>' in the setup cell and passes it here, so the name
+# can never drift from the file.
+def table_dir(notebook, create=True):
+    """`outputs/tables/<notebook>/` — the date-stamped CSVs a notebook writes"""
+    path = TABLES / notebook
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def fig_dir(stage, create=True):
-    """`outputs/fig/<stage>/` — where a stage's figures go"""
-    path = FIG / STAGES[stage]
+def fig_dir(notebook, create=True):
+    """`outputs/fig/<notebook>/` — the figures a notebook writes"""
+    path = FIG / notebook
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
+
+
 RESULTS = OUTPUTS / 'results'   # -> Dropbox .../new_national_pipeline_files/results
 MODELS = OUTPUTS / 'models'     # -> Dropbox .../new_national_pipeline_files/models
 GRAPHS = OUTPUTS / 'graphs'     # -> Dropbox .../new_national_pipeline_files/graphs

@@ -33,8 +33,9 @@ import params
 import utils
 
 CFG = params.FINAL_MODEL
-STAGE = 'model_performance'
-OUTDIR = params.table_dir(STAGE)  # outputs/tables/<stage>/ — the path names the step
+# the notebook that owns this module's output, so the folder names its producer
+NOTEBOOK = '02_model_performance'
+OUTDIR = params.table_dir(NOTEBOOK)  # outputs/tables/<stage>/ — the path names the step
 
 
 
@@ -54,7 +55,7 @@ ONLINE_MODELS = params.EXTERNAL / 'pipeline/model_fit/national/models/OLS'
 
 def load_annual_series():
     """the coherent-GGI country-year table, which carries the predicted levels and every GGI"""
-    matches = sorted(params.table_dir('coherent_ggi').glob('coherent_ggi_country_year_*.csv'))
+    matches = sorted(params.table_dir('04_coherent_ggi_figures').glob('coherent_ggi_country_year_*.csv'))
     if not matches:
         raise FileNotFoundError('no coherent_ggi_country_year_<date>.csv — run the coherent GGI '
                                 'notebook (04_01) first')
