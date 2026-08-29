@@ -2,7 +2,7 @@
 # Created by valler at 10/06/2024
 Feature: params of the project — all paths, constants, config, seeds and plot style.
 
-Paths are resolved relative to the project root (CONVENTIONS.md §1), never hardcoded.
+Paths are resolved relative to the project root (doc/00_project_conventions.md §1), never hardcoded.
 `data/` and `outputs/{results,models,graphs}` are gitignored symlinks into the shared
 Dropbox tree; see data/README.md for what each one points at.
 """
@@ -20,7 +20,7 @@ EXTERNAL = DATA / 'external'    # -> Dropbox dgg_research (upstream fb pipeline)
 
 # UN World Population Prospects. The single-age workbooks live under PROCESSED because they are
 # acquired per refresh, not shipped with the pipeline; the panel the model stages read is the
-# `un_1950_2023_processed.csv` in RAW. See doc/decisions.md D29.
+# `un_1950_2023_processed.csv` in RAW. See doc/decisions_shared.md D29.
 UN_POP = PROCESSED / 'un_pop'
 UN_POP_RAW = UN_POP / 'raw'
 
@@ -48,6 +48,41 @@ def _un_pop_panel(edition):
     return matches[-1]
 
 UN_POP_PROCESSED = _un_pop_panel(UN_POP_EDITION)
+
+# ----------------------------------------------------------------------------------------------------
+# offline predictors: which vintage the model matrix is built from
+# ----------------------------------------------------------------------------------------------------
+# Same pattern as UN_POP_EDITION — one place to choose, so no two stages can sit on different
+# vintages of the same panel.
+#
+#   'shipped'    the May-2024 assembly, 1946-2023. Every published model rests on this.
+#   'latest'     the newest offline_predictors_<date>.csv from
+#                src/data_creation/05_offline_predictors_update.py — the shipped values with the
+#                previously-empty later years filled in (hdi/gdi -> 2023, gdp_pcap -> 2025).
+#   '<date>'     pin one explicitly, e.g. '20260819'.
+#
+# The update only ever writes cells that were EMPTY and beyond a variable's last year, and it
+# re-reads what it wrote to prove no existing value moved. So 'latest' does not re-base history —
+# but it IS vintage-mixed: rows to 2022 are HDR 2023-24, rows from 2023 are HDR 2025. See
+# doc/data_creation_methodology.md §3 and D40.
+OFFLINE_PREDICTORS_EDITION = 'latest'
+
+
+def _offline_predictors(edition):
+    if edition == 'shipped':
+        return RAW / 'offline_predictors.csv'
+    if edition == 'latest':
+        matches = sorted(RAW.glob('offline_predictors_[0-9]*.csv'))
+        if not matches:
+            raise FileNotFoundError(
+                f'no offline_predictors_<date>.csv in {RAW} — run '
+                'src/data_creation/05_offline_predictors_update.py, or set the edition to '
+                "'shipped'")
+        return matches[-1]
+    return RAW / f'offline_predictors_{edition}.csv'
+
+
+OFFLINE_PREDICTORS = _offline_predictors(OFFLINE_PREDICTORS_EDITION)
 
 OUTPUTS = ROOT / 'outputs'
 FIG = OUTPUTS / 'fig'
@@ -97,7 +132,7 @@ FB_PREPROCESSED = EXTERNAL / 'pipeline/preprocessed/national'
 
 # Legacy inputs of 01_facebook_data.py. These no longer exist on Dropbox; the script was
 # superseded by 01_01_facebook_data_monthly.py, which reads FB_COUNTS via utils.read_fb_data.
-# See doc/decisions.md (D6) before repointing these at FB_COUNTS.
+# See doc/decisions_shared.md (D6) before repointing these at FB_COUNTS.
 FB_AVERAGED = EXTERNAL / 'fb_data/averaged/national'
 FB_PRE_PIPELINE = EXTERNAL / 'fb_data/pre_pipeline_result'
 
@@ -199,7 +234,7 @@ best_model_specs = {'internet':{'offline':{"var_set":['se_r', 'wdi_fertility', '
 # ====================================================================================================
 # What dgg_pipeline/src/modelling/national_model.py actually loads to produce the published
 # national estimates: an OLS on the ITU-deleted pooled panel. Verified by refitting — the
-# coefficients reproduce the shipped pickles to ~1e-15. See doc/decisions.md D12.
+# coefficients reproduce the shipped pickles to ~1e-15. See doc/decisions_shared.md D12.
 FINAL_MODEL = {
     'model_folder': 'OLS',
     'model_type': 'combined_with_CIS',
@@ -275,12 +310,20 @@ FIGURE_VARIANTS = ['online_with_CIS', 'offline_with_CIS', 'combined_with_CIS']
 # coherent GGI (src/13_coherent_ggi.py)
 # ====================================================================================================
 # The internally coherent gender gap index, derived from the predicted female and male levels
-# rather than predicted directly. See doc/methodology.md and doc/decisions.md D16.
+# rather than predicted directly. See doc/methodology.md and doc/decisions_shared.md D16.
 COHERENT_GGI = {
     # dgg_pipeline's published series is the golden standard: read-only, never written to.
     'source': EXTERNAL / 'pipeline/result/national/aggregate_files.csv',
     'indicators': ['internet', 'mobile'],
     'parity_cap': 1.0,    # the primary measure is min(raw, 1) — values >1 are out of scope
+    # D43: country-years where the coherent and the directly predicted GGI disagree by more than
+    # this carry a construction disagreement rather than a measured gender gap, so they are dropped
+    # from every definition before sections D onward of 05 and all of 06. Both series are
+    # parity-capped first, so the comparison is like-for-like. One cut for both indicators: it
+    # costs mobile ~1% of its country-years and buys an identical country sample across the two,
+    # without which any internet-vs-mobile figure is quietly non-comparable. The trial sweep that
+    # produced it is section C of 05_coherent_ggi_comparison.
+    'discrepancy_threshold': 0.07,
     'near_zero': 1e-6,    # male levels below this are not divided by; the row is flagged instead
     'tolerance': 1e-9,    # numerical tolerance for the assertions
     'regions': RAW / 'iso3_regions.csv',   # World Bank regions, all 214 countries covered
@@ -294,6 +337,46 @@ COHERENT_GGI = {
     # The fitted panels, used only to split validation rows into in-sample and held-out.
     'training_panels': PROCESSED / 'combined_data/updated_ground_truth_and_fb',
     'training_file': 'combined_multiple_years_no_missing_keep_countries_fb_aligned_itu_deleted.csv',
+}
+
+# ====================================================================================================
+# beta / sigma convergence (08_prediction_and_convergence) — D47, D48, D49
+# ====================================================================================================
+# The convergence analysis runs on the DIRECTLY predicted GGI (`{ind}_ggi_direct`), not the coherent
+# one. That is deliberate and is the opposite of the decomposition's choice: the coherent measure is
+# reserved for the countries where it is reliable (D43's discrepancy filter), whereas this analysis
+# is meant to be global. See D47.
+CONVERGENCE = {
+    # Complete calendar years only. The golden series runs to 2026-05, so 2026 is a five-month
+    # partial and averaging it against a full 2015 would bias the endpoint on a rising series.
+    'window': (2015, 2025),
+    'measure': '{ind}_ggi_direct',
+    'ceiling': 1.0,
+    'tol': 1e-9,
+
+    # A country at the ceiling in EVERY year of the window contributes (initial=1, delta=0): pure
+    # leverage, no information about convergence. It is excluded. A country that CROSSES into the
+    # ceiling during the window is kept — its movement is the finding, and dropping it would delete
+    # exactly the successes D26 refused to delete. See D47.
+    'exclude_always_at_ceiling': True,
+
+    # Above this share of a group's endpoint values sitting on the ceiling, `delta = 1 - initial`
+    # holds for most of the group and the regression returns beta -> -1 as arithmetic rather than as
+    # evidence. Such a group is reported with `identified = False` rather than dropped, so the reader
+    # sees why there is no usable estimate. South America mobile is the clear case (D21.5, D47).
+    'max_censored_share': 0.50,
+
+    'group': 'continent',   # ONE grouping for the whole notebook (the old code mixed two)
+    'cov_type': 'HC1',      # classical SEs understate by ~1.7x here; variance shrinks at the ceiling
+
+    # Population weights are FIXED at 2015 for two independent reasons (D49):
+    #   1. There is no 2025 population. UN_POP_PROCESSED stops at 2024 and its 2024 is a
+    #      byte-identical copy of its 2023 (D46).
+    #   2. Fixed weights keep weighted sigma a statement about the GGI. Contemporaneous weights make
+    #      sigma move when population shares move even if no country's GGI changes. `fixed_2015` is
+    #      already the decomposition's basis for the same reason (D24).
+    'weight_year': 2015,
+    'weightings': ['unweighted', 'pop_weighted'],   # both reported; unweighted is primary for beta
 }
 
 countries_to_exclude_for_imputation = {'mobile': ['ABW', 'AND', 'ASM', 'ATG', 'BMU', 'CHI', 'CSK', 'CUW', 'CYM', 'DDR', 'DMA', 'FRO', 'GIB', 'GRL', 'GUM', 'HKG', 'IMN', 'KNA', 'MAC', 'MAF', 'MCO', 'MNP', 'MSR', 'MTQ', 'NCL', 'NIU', 'NRU', 'PRI', 'PRK', 'PSE', 'PYF', 'SAS', 'SCG', 'SHN', 'SUN', 'SXM', 'TCA', 'TWN', 'VDR', 'VGB', 'VIR', 'XKX', 'XTI', 'XXK', 'YMD', 'YUG'],

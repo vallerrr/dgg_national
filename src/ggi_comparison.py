@@ -3,7 +3,7 @@
 Feature: figure-ready datasets for the coherent-vs-direct GGI appendix.
 
 Builds every table the appendix notebook plots, so the analysis is reproducible without running a
-notebook and the plotting code contains no data preparation. `src/analysis/09_01_coherent_ggi_comparison.ipynb`
+notebook and the plotting code contains no data preparation. `src/analysis_notebooks/05_coherent_ggi_comparison.ipynb`
 reads these and draws.
 
 Country selection for the trend panels follows a rule fixed here, applied before any figure is
@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+import coherent_ggi
 import params
 
 CFG = params.COHERENT_GGI
@@ -77,6 +78,47 @@ def common_sample(annual):
     keep = complete[complete].index
     dropped = sorted(set(annual['gid_0']) - set(keep))
     return annual[annual['gid_0'].isin(keep)].copy(), dropped
+
+
+# ====================================================================================================
+# the discrepancy filter (D43)
+# ====================================================================================================
+def apply_threshold(annual, cut=None):
+    """
+    drop country-years where the two constructions of the GGI disagree by more than `cut`
+
+    Where they disagree sharply at least one of them is wrong about that country-year, and nothing
+    in either series says which — so the point carries a construction disagreement rather than a
+    measured gender gap. Section C of 05_coherent_ggi_comparison is the trial sweep behind the
+    default cut (`params.COHERENT_GGI['discrepancy_threshold']`).
+
+    The row is blanked under **every** definition for that indicator, not just the coherent ones:
+    a regional mean is only a robustness check if the definitions are compared over the same
+    country-years. Indicators are filtered independently, so a country-year can survive for mobile
+    and not for internet — the columns are separate.
+
+    Returns (filtered copy, per-indicator report).
+    """
+    cut = CFG['discrepancy_threshold'] if cut is None else cut
+    out, rows = annual.copy(), []
+    for ind in INDICATORS:
+        d = coherent_ggi.discrepancy(annual, ind)
+        cols = [t.format(ind=ind) for t in DEFINITIONS.values()]
+        drop = d > cut
+        before = annual[cols[0]].notna()
+        out.loc[drop, cols] = np.nan
+        kept_countries = set(out.loc[out[cols[0]].notna(), 'gid_0'])
+        rows.append({
+            'indicator': ind, 'cut': cut,
+            'n': int(before.sum()), 'dropped': int((drop & before).sum()),
+            'kept': int((~drop & before).sum()),
+            'kept_pct': 100 * (~drop & before).sum() / max(before.sum(), 1),
+            'countries': annual.loc[before, 'gid_0'].nunique(),
+            'countries_kept': len(kept_countries),
+            'countries_lost_entirely': annual.loc[before, 'gid_0'].nunique() - len(kept_countries),
+            'max_disc_kept': float(d[~drop].max()),
+        })
+    return out, pd.DataFrame(rows)
 
 
 # ====================================================================================================
@@ -157,6 +199,9 @@ def select_trend_countries(annual):
     for ind in INDICATORS:
         d = (annual.assign(diff=annual[f'{ind}_ggi_coherent_parity'] - annual[f'{ind}_ggi_direct'])
              .groupby(['gid_0', 'country', 'continent'], as_index=False)['diff'].mean()
+             # a country the discrepancy filter emptied has no mean to rank on; without the drop
+             # it sorts to the tail and would be picked as a `largest_negative`
+             .dropna(subset=['diff'])
              .sort_values(['diff', 'gid_0'], ascending=[False, True], ignore_index=True))
 
         groups = {
@@ -203,9 +248,12 @@ def build_regional(annual):
     rows = []
     for ind in INDICATORS:
         for name, template in DEFINITIONS.items():
-            g = (annual.groupby(['region', 'year'], as_index=False)
-                 .agg(value=(template.format(ind=ind), 'mean'),
-                      n_countries=('gid_0', 'nunique')))
+            col = template.format(ind=ind)
+            # count the countries that actually carry a value, not the rows in the block: after
+            # the discrepancy filter those differ, and the mean is over the former
+            g = (annual.assign(_id=annual['gid_0'].where(annual[col].notna()))
+                 .groupby(['region', 'year'], as_index=False)
+                 .agg(value=(col, 'mean'), n_countries=('_id', 'nunique')))
             rows.append(g.assign(indicator=ind, definition=name))
     regional = pd.concat(rows, ignore_index=True)
 

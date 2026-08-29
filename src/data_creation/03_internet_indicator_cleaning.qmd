@@ -17,7 +17,7 @@ check_paths()
 # environment.yml. Set to TRUE after install.packages(c("rnaturalearth", "rnaturalearthdata")).
 DRAW_MAPS <- FALSE
 
-# CONVENTIONS.md §1: data/raw is immutable. This file used to write its inputs back over
+# doc/00_project_conventions.md §1: data/raw is immutable. This file used to write its inputs back over
 # themselves, which silently re-based every downstream model. Outputs are date-stamped (§3)
 # unless this is flipped deliberately.
 OVERWRITE_SHIPPED <- FALSE

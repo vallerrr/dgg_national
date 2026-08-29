@@ -263,11 +263,13 @@ df_fb_all.to_csv(params.FB_PRE_PIPELINE / 'fb_all.csv',index=False)
 # 2. UN population data preprocess
 # ====================================================================================================
 # 2.0 read df_pop (ratio and total count)
-df_pop = pd.read_csv(params.RAW / 'un_pop_2001_2021.csv')  # 236 countries
+# Retired 2026-08-21 to data/raw/archive/ — these two stop at 2021 and only this archived
+# path still reads them. The live pipeline weights with un_1950_2023_processed.csv.
+df_pop = pd.read_csv(params.RAW / 'archive' / 'un_pop_2001_2021.csv')  # 236 countries
 df_pop.rename(columns={'survey_start': 'Year'},inplace=True)  # 2022-2021
 
 # 2.1 merge female and male data
-df_pop_all = pd.read_csv(params.RAW / 'population_count.csv')
+df_pop_all = pd.read_csv(params.RAW / 'archive' / 'population_count.csv')
 df_pop_all.rename(columns={'ISO3 Alpha-code':'iso3','survey_start':'Year'},inplace=True)  # 2022-2021
 # female and male counts should time 1000 (counting unit)
 for col in [x for x in df_pop_all.columns if '_' in x ]:

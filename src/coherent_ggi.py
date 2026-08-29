@@ -219,6 +219,47 @@ def clipping_report(df):
     return pd.DataFrame(rows)
 
 
+# The two names the coherent column travels under: the raw output of `build_country_year`, and
+# the shorter alias `ggi_comparison.load_country_year` renames it to. One filter serves both.
+COHERENT_ALIASES = ['{ind}_ggi_coherent_parity', '{ind}_ggi_coherent_mean_of_ratios']
+
+
+def coherent_column(frame, ind):
+    """whichever name the parity-capped coherent GGI carries in this frame"""
+    for name in COHERENT_ALIASES:
+        col = name.format(ind=ind)
+        if col in frame.columns:
+            return col
+    raise KeyError(f'no coherent GGI column for {ind} in {list(frame.columns)}')
+
+
+def discrepancy(frame, ind):
+    """
+    |coherent - direct| for one indicator, both series parity-capped
+
+    Capping both sides first is what makes this like-for-like: an uncapped direct value above
+    parity would show a difference that is an artefact of the cap rather than a disagreement
+    between the two constructions. In practice neither side has a value above the cap, so the
+    clip is a guarantee rather than a correction.
+    """
+    cap = CFG['parity_cap']
+    direct = frame[f'{ind}_ggi_direct'].clip(upper=cap)
+    coherent = frame[coherent_column(frame, ind)].clip(upper=cap)
+    return (coherent - direct).abs()
+
+
+def over_threshold(frame, ind, cut=None):
+    """
+    True where the two constructions disagree by more than `cut` (D43)
+
+    Where they disagree sharply at least one of them is wrong about that country-year and nothing
+    in either series says which, so the point carries a construction disagreement rather than a
+    measured gender gap. Missing rows are False: absent is not the same as disagreeing.
+    """
+    cut = CFG['discrepancy_threshold'] if cut is None else cut
+    return discrepancy(frame, ind) > cut
+
+
 def discrepancy_stats(df, ind, label_fields):
     """signed/absolute differences, RMSE, correlations and threshold shares for one subset"""
     coherent, direct = df[f'{ind}_ggi_coherent_parity'], df[f'{ind}_ggi_direct']

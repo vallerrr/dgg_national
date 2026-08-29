@@ -101,7 +101,7 @@ latest_contrl = params.latest_contrl
 
 # read the background variables
 
-data_path = params.RAW / 'offline_predictors.csv'
+data_path = params.OFFLINE_PREDICTORS  # params.OFFLINE_PREDICTORS_EDITION chooses the vintage
 df = pd.read_csv(data_path)
 df_wide = df.pivot(index='iso3',columns='year',values=[x for x in df.columns if x not in ['country','iso3','year']])
 

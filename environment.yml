@@ -1,4 +1,4 @@
-# Pinned from the working `dgg_research` env on 2026-08-02 (CONVENTIONS.md §5).
+# Pinned from the working `dgg_research` env on 2026-08-02 (doc/00_project_conventions.md §5).
 #   mamba env create -f environment.yml
 #   mamba activate dgg_research
 name: dgg_research

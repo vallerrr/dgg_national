@@ -803,7 +803,7 @@ full_groundtruth_update <- full_groundtruth_pop %>%
   # predicts *below* MT10. Floor it at the observed 3-month value. This step lived in
   # technical_report_data_refresh.qmd rather than the production script and was lost when this
   # file was made self-contained; without it 8 men's and 11 women's MICS values are too low, by up
-  # to 0.031 (Turks and Caicos 2019). See doc/decisions.md D31.
+  # to 0.031 (Turks and Caicos 2019). See doc/decisions_shared.md D31.
   mutate(internet_men = ifelse(str_detect(tolower(survey_type), "mics") &
                                  internet_men < perc_used_internet_past3months_wght_age_15_to_49_men,
                                perc_used_internet_past3months_wght_age_15_to_49_men, internet_men),

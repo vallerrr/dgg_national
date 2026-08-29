@@ -20,12 +20,12 @@ source(here("src", "R_utils.R"))
 check_paths()
 
 # WPP2022 was the edition this script was written against; those workbooks are no longer on
-# Dropbox, so it now reads the WPP2024 raws in data/processed/un_pop/raw. See doc/decisions.md.
+# Dropbox, so it now reads the WPP2024 raws in data/processed/un_pop/raw. See doc/decisions_shared.md.
 WPP_EDITION <- "WPP2024"
 WPP_SHEET <- "Estimates"
 YEAR_FROM <- 2001  # kept as ">" below, so the panel starts at 2002
 
-# CONVENTIONS.md §1: `data/raw` is immutable. Writing the regenerated files straight back over the
+# doc/00_project_conventions.md §1: `data/raw` is immutable. Writing the regenerated files straight back over the
 # shipped ones would silently re-base every downstream model, so outputs are date-stamped (§3).
 # Set to TRUE only when deliberately promoting this run to be the new pipeline input.
 OVERWRITE_SHIPPED <- FALSE

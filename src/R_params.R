@@ -1,6 +1,6 @@
 # R-side companion to params.py — the paths the R and Quarto stages (00-04) read and write.
 #
-# CONVENTIONS.md §1: nothing here is an absolute path. Everything resolves through the gitignored
+# doc/00_project_conventions.md §1: nothing here is an absolute path. Everything resolves through the gitignored
 # `data/` symlinks into the shared Dropbox tree (see data/README.md), so the scripts stay portable.
 #
 # Source it from a script or a Quarto chunk:
@@ -38,7 +38,7 @@ UN_POP_RAW <- file.path(UN_POP, "raw")
 UN_POP_PROCESSED <- file.path(RAW, "un_1950_2023_processed.csv")
 
 # ---- outputs -------------------------------------------------------------------------------------
-# CONVENTIONS.md §3: generated files carry their save date, so a rerun never silently replaces the
+# doc/00_project_conventions.md §4: generated files carry their save date, so a rerun never silently replaces the
 # artefact an earlier analysis was built on.
 STAMP <- format(Sys.Date(), "%Y%m%d")
 stamped <- function(name, ext = "csv") file.path(RAW, sprintf("%s_%s.%s", name, STAMP, ext))

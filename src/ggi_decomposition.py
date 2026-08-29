@@ -18,13 +18,14 @@ never labels a male-decline convergence as an access gain.
 Zeros are excluded rather than patched: log(0) is undefined and no constant is added to the primary
 results. A separate epsilon sensitivity is reported so the cost of that choice is visible.
 
-    python src/15_coherent_ggi_decomposition.py
+    python src/ggi_decomposition.py
 """
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
 
+import coherent_ggi
 import params
 
 CFG = params.COHERENT_GGI
@@ -136,10 +137,43 @@ def latest(stem):
     return pd.read_csv(matches[-1])
 
 
-def load_levels():
-    """annual female and male adoption levels per country"""
+def load_levels(cut=None):
+    """
+    annual female and male adoption levels per country, after the discrepancy filter (D43)
+
+    A country-year whose coherent GGI disagrees with the directly predicted one by more than
+    `params.COHERENT_GGI['discrepancy_threshold']` is blanked for that indicator: the levels are
+    what the coherent GGI is built from, so a disagreement about the ratio is a disagreement about
+    the levels, and decomposing it would attribute a construction artefact to female or male
+    adoption. Indicators filter independently — a country-year can survive for mobile and not for
+    internet. `decompose` already drops rows with a missing level at either endpoint, so blanking
+    is all this needs to do.
+    """
     annual = latest('coherent_ggi_country_year')
-    return annual[annual['year'].between(TREND_START, TREND_END)].copy()
+    annual = annual[annual['year'].between(TREND_START, TREND_END)].copy()
+    for ind in INDICATORS:
+        drop = coherent_ggi.over_threshold(annual, ind, cut)
+        annual.loc[drop, [f'{ind}_women', f'{ind}_men']] = np.nan
+    return annual
+
+
+def filter_report(cut=None):
+    """what the discrepancy filter removes, so the decomposition can state its own sample loss"""
+    cut = params.COHERENT_GGI['discrepancy_threshold'] if cut is None else cut
+    raw = latest('coherent_ggi_country_year')
+    raw = raw[raw['year'].between(TREND_START, TREND_END)]
+    rows = []
+    for ind in INDICATORS:
+        drop = coherent_ggi.over_threshold(raw, ind, cut)
+        have = raw[f'{ind}_women'].notna()
+        kept = set(raw.loc[have & ~drop, 'gid_0'])
+        rows.append({'indicator': ind, 'cut': cut,
+                     'n': int(have.sum()), 'dropped': int((have & drop).sum()),
+                     'kept_pct': 100 * (have & ~drop).sum() / max(have.sum(), 1),
+                     'countries': raw.loc[have, 'gid_0'].nunique(),
+                     'countries_kept': len(kept),
+                     'countries_lost_entirely': raw.loc[have, 'gid_0'].nunique() - len(kept)})
+    return pd.DataFrame(rows)
 
 
 def load_population():
@@ -422,6 +456,7 @@ def main():
     outputs = {
         'codebook': pd.DataFrame(CODEBOOK).sort_values('code', ignore_index=True),
         'ceiling_report': ceiling_report,
+        'discrepancy_filter': filter_report(),
         'country_period': dec,
         'exclusions': exclusions,
         'sensitivity': sensitivity(levels),
@@ -436,6 +471,9 @@ def main():
         frame.to_csv(path, index=False)
         print(f'  {path.relative_to(params.ROOT)}  ({len(frame)} rows)')
 
+    print(f"\ndiscrepancy filter (D43), cut "
+          f"{params.COHERENT_GGI['discrepancy_threshold']}:")
+    print(outputs['discrepancy_filter'].round(2).to_string(index=False))
     print(f'\nlevel_ceiling_ctrl = {params.level_ceiling_ctrl}  '
           f'(female level capped at the male level; parity is the ceiling)')
     print(f'identity: max |residual| = {identity["max_abs_residual"].iloc[0]:.2e} '

@@ -7,7 +7,7 @@ library(dplyr)
 
 #' Attach a year-indexed panel to observations, falling back to the latest available year.
 #'
-#' The project's one rule for matching a year (doc/decisions.md D32): use the source's value for
+#' The project's one rule for matching a year (doc/decisions_shared.md D32): use the source's value for
 #' the exact year when it has one, otherwise the most recent *earlier* year for that key; if the
 #' source begins after the requested year, use its earliest. This mirrors
 #' `utils.join_latest_available_year()` exactly, so the population behind a 2025 survey and the

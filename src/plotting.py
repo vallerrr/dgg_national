@@ -3,7 +3,7 @@
 Feature: the project's chart style, in one place.
 
 Every notebook used to redefine `tidy()`, the ink colours and the save logic, which is how figures
-drift apart. CONVENTIONS.md §6 says styling comes from `params.STYLE`; this module is the code that
+drift apart. doc/00_project_conventions.md §6 says styling comes from `params.STYLE`; this module is the code that
 applies it.
 
     import plotting as plot
@@ -137,3 +137,116 @@ def grouped_bars(ax, categories, series, values, colours=None, width=None,
     ax.set_xticks(x)
     ax.set_xticklabels(categories)
     return ax
+
+
+def beeswarm(ax, values, centre=0.0, width=0.34, radius=None, colour=None, size=22,
+             alpha=0.75, edgecolor='white', linewidth=0.3, zorder=3, **kwargs):
+    """
+    a one-dimensional swarm of points, spread sideways only to stop them overlapping
+
+    The form for "here is every value in a distribution", where a box plot would hide how many
+    points there are and a histogram would hide the individual specification. Points keep their
+    exact y; the x offset carries no meaning beyond local density.
+
+    Args:
+        ax: target axes.
+        values: the values to plot, on the y axis.
+        centre: the x position the swarm is built around.
+        width: half-width of the swarm, in x data units. The widest row reaches this.
+        radius: collision radius in y data units. Defaults to 1.2% of the value range, which
+            packs ~127 points into a readable swarm; raise it for fewer, fatter points.
+        colour, size, alpha, edgecolor, linewidth, zorder: passed to `ax.scatter`. The thin
+            white ring is what keeps two touching points readable as two.
+
+    Returns the x positions used, so a caller can annotate an individual point.
+
+    NOTE: the swarm is normalised to `width` on its own, so swarm *width* is not comparable
+    between groups — only the y positions are. Compare heights, never widths.
+    """
+    v = np.asarray(values, dtype=float)
+    finite = np.isfinite(v)
+    x = np.full(v.shape, np.nan)
+    if not finite.any():
+        return x
+
+    vals = v[finite]
+    span = np.ptp(vals) or 1.0
+    r = radius if radius is not None else span * 0.012
+
+    # greedy swarm: walk the points in ascending y and give each the smallest |offset| that
+    # clears every already-placed point within one diameter vertically
+    offsets = np.zeros(len(vals))
+    order = np.argsort(vals)
+    placed = []
+    for i in order:
+        y = vals[i]
+        blocked = []
+        for py, px in placed:
+            dy = abs(y - py)
+            if dy < 2 * r:
+                dx = np.sqrt(max((2 * r) ** 2 - dy ** 2, 0.0))
+                blocked.append((px - dx, px + dx))
+        candidates = [0.0]
+        for lo, hi in blocked:
+            candidates += [lo, hi]
+        for c in sorted(candidates, key=abs):
+            if all(not (lo < c < hi) for lo, hi in blocked):
+                offsets[i] = c
+                break
+        placed.append((y, offsets[i]))
+
+    reach = np.abs(offsets).max()
+    offsets = offsets * (width / reach) if reach > 0 else offsets
+
+    x[finite] = centre + offsets
+    ax.scatter(x[finite], vals, s=size, color=colour or PALETTE[0], alpha=alpha,
+               edgecolor=edgecolor, linewidth=linewidth, zorder=zorder, **kwargs)
+    return x
+
+
+# ====================================================================================================
+# continuous colour: the two ramps a choropleth or heatmap may use
+# ====================================================================================================
+# Before these existed the project had no colormap at all, so every map invented one: notebook 08
+# built a seven-stop coral-to-navy ramp, 10_adolescent_analysis built a ten-stop red-to-blue one that
+# disagreed with it, and scripts/outcomes.py fell back to raw `viridis`. Three maps of the same
+# quantity, three colour languages, none of them the D23 palette that every other figure uses.
+#
+# Both ramps below are built from `params.colors`, so a change to the palette carries through to the
+# maps as well. They interpolate in sRGB, which is adequate for a ramp anchored on two hues chosen
+# for their separation; do not add a third hue to the middle of `diverging` — the neutral midpoint is
+# what makes the sign of the deviation readable.
+
+def sequential(hue='teal', light='#f7f7f7', name='dgg_sequential'):
+    """
+    a light-to-hue ramp for a quantity with a natural zero
+
+    Args:
+        hue: a key in `params.colors`, or a literal hex string.
+        light: the low end. A near-white rather than pure white, so a zero value is still
+            distinguishable from the "no data" ground the maps paint underneath.
+    """
+    from matplotlib.colors import LinearSegmentedColormap
+
+    high = params.colors.get(hue, hue)
+    return LinearSegmentedColormap.from_list(name, [light, high])
+
+
+def diverging(low='rose', high='teal', mid='#f2f0ed', name='dgg_diverging'):
+    """
+    a two-hue ramp through a neutral midpoint, for a quantity read against a reference value
+
+    For the GGI the reference is parity. Pair this with `matplotlib.colors.TwoSlopeNorm(vcenter=1.0)`
+    so the midpoint of the colour scale lands on parity rather than on the midpoint of the data —
+    otherwise the colour that reads as "no gap" moves with the sample, which is the failure this
+    exists to prevent.
+
+    `rose` -> `teal` is the pairing with the widest separation under simulated protanopia and
+    deuteranopia among the D23 hues, which is why it is the default rather than the conventional
+    red/blue.
+    """
+    from matplotlib.colors import LinearSegmentedColormap
+
+    lo = params.colors.get(low, low)
+    hi = params.colors.get(high, high)
+    return LinearSegmentedColormap.from_list(name, [lo, mid, hi])

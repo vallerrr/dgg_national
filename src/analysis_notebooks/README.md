@@ -20,13 +20,17 @@ Each notebook writes to a folder named after itself:
 | `02_model_performance.ipynb` | LOCO for all ten variants, pickle verification, survey validation | 04's series | **runs** |
 | `03_unseen_survey_validation.ipynb` | figures on the 17 unseen surveys | 02 | **runs** |
 | `04_coherent_ggi_figures.ipynb` | the coherent GGI series and its figures | the golden series | **runs** |
-| `05_coherent_ggi_comparison.ipynb` | coherent-vs-direct tables and figures | 04, 02 | **runs** |
-| `06_coherent_ggi_decomposition.ipynb` | the exact decomposition | 04 | **runs** |
+| `05_coherent_ggi_comparison.ipynb` | coherent-vs-direct tables and figures; **sets the 0.07 discrepancy threshold** (D43) | 04, 02 | **runs** |
+| `06_coherent_ggi_decomposition.ipynb` | the exact decomposition, on the filtered series (D43) | 04 | **runs** |
 | `07_aggregation_methods.ipynb` | the aggregation audit | 04 | **runs** |
-| `08_prediction_and_convergence.ipynb` | prediction maps, beta/sigma convergence | — | imported (D20) |
+| `08_prediction_and_convergence.ipynb` | prediction maps, beta/sigma convergence — calls `convergence` | 04's annual panel | **runs** (D47, D48, D49) |
 | `09_post_analysis_trend.ipynb` | trend comparison | — | partial — missing model folder |
 | `10`, `11` adolescent | a separate analysis line | — | not part of the national pipeline |
 | `12_s1_investigations.ipynb` | supplementary checks | — | partial |
+| `13_extended_panel_exploration.ipynb` | the panel plus the new surveys, refit and re-validated; **§4 the new surveys under both models**, **§5 the `gdp_pcap` vintage test** | the fitting panel, the survey ground truth, FB, offline predictors, WDI API | **runs** — exploration only (D39, D44, D45) |
+| `14_specification_stability.ipynb` | `robustipy` sweep, each spec variable as the focal X; LOCO for all 127 distinct specs | the fitting panel | **runs** (D39, E1, E2) |
+| `15_experimental_model_design.ipynb` | a five-term spec (`fb_18_999_r` + the offline four) scored against production, then swept | the fitting panel | **runs** — exploration only (E3-E5) |
+| `16_experimental_model_design_new_parameters.ipynb` | drops `gdp_pcap` only, then sweeps all 46 development indicators as substitutes and as additions | the fitting panel | **runs** — exploration only (E6) |
 
 The R and Quarto data-creation stages are **not** notebooks — they read DHS/MICS microdata with
 `haven`. They are in `src/data_creation/`, numbered `00`–`04`; see `doc/workflow.md`.
@@ -48,4 +52,5 @@ which works whether Jupyter was launched in the notebook folder or the project r
 ## Style
 
 Charts read `params.STYLE` through `src/plotting.py` — `plot.tidy()`, `plot.legend()`,
-`plot.save()`, `plot.PALETTE`. Do not redefine axis treatment or colours in a notebook.
+`plot.save()`, `plot.PALETTE`, `plot.grouped_bars()`, `plot.beeswarm()`. Do not redefine axis
+treatment or colours in a notebook.

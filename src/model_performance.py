@@ -5,7 +5,7 @@ one reproduces its shipped pickle.
 
 This is the audit that answers "which model are we actually using, on what data, and do our numbers
 match the ones published online". It exists because five model variants ship under names that do not
-describe what separates them — see params.MODEL_VARIANTS and doc/modelling.md.
+describe what separates them — see params.MODEL_VARIANTS and doc/modelling_methodology.md.
 
 Two outputs, both date-stamped:
   * model_performance_<date>.csv   — n, in-sample R2, LOCO R2 and LOCO MAE for every
