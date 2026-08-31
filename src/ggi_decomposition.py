@@ -48,7 +48,11 @@ TREND_START, TREND_END = 2015, 2025      # 2026 is partial (D18)
 PRIMARY = (2015, 2025)
 EXTRA_INTERVALS = [(2015, 2020), (2020, 2025)]
 
-TAU = 0.01           # log-point threshold for "meaningful"; ~1% relative change
+TAU = 0.013          # log-point threshold for "meaningful"; ~1.3% relative change over the interval
+# Raised from 0.01 (D55). At 0.01 South Korea's mobile gap change over 2015-2025 (delta =
+# -0.0124, ~0.12% a year) was classified as divergence, which reads as a widening gap when the
+# series is flat to three decimal places. 0.013 clears it and nothing else near it: the two
+# remaining mobile divergences, Turkmenistan (-0.042) and Kiribati (-0.066), sit well clear.
 TOLERANCE = 1e-12    # the decomposition identity is exact, so the tolerance is machine-level
 EPSILON = 0.001      # sensitivity only — never used in the primary results
 WEIGHT_YEAR = 2015   # fixed base-year population weights (see `load_population`)

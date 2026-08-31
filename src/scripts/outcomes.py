@@ -110,6 +110,8 @@ temp['country'].sum()
 import geopandas as gpd
 import matplotlib.pyplot as plt
 
+import plotting as plot
+
 for indicator in ['internet','mobile']:
 
     if indicator == 'internet':
@@ -124,8 +126,11 @@ for indicator in ['internet','mobile']:
 
     fig, ax = plt.subplots(1, 1, figsize=(20, 12))
 
-    world.plot(ax=ax, color='grey')  # Default color for countries not in df
-    merged.plot(ax=ax, column=outcome_var, cmap='viridis', legend=True, legend_kwds={'shrink': 0.5})
+    # The project ramp, from shared_style.colors (D52), not raw viridis — this map and the ones in
+    # analysis_notebooks/06 and 08 show the same quantity and must speak one colour language.
+    world.plot(ax=ax, color=plot.NODATA)  # countries with no observation
+    merged.plot(ax=ax, column=outcome_var, cmap=plot.sequential(), legend=True,
+                legend_kwds={'shrink': 0.5})
     plt.title(f'{indicator} coverage map', fontsize=15)
     ax.axis('off')
     plt.show()
@@ -160,9 +165,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib.patches as mpatches
 
+# Survey year is ordered, so it takes a ramp off the project palette rather than seaborn's
+# "mako" — one colour scheme across every figure the project produces (D52).
 years = sorted(df_diff['internet_year'].unique())
-palette = sns.color_palette("mako", len(years))
-year_color_map = dict(zip(years, palette))
+year_color_map = dict(zip(years, plot.ordinal(len(years))))
 
 
 fig, ax = plt.subplots(1, 3, figsize=(15, 5))
@@ -174,7 +180,7 @@ for i, type in enumerate(['ggi','men','wom']):
     ax[i].set_ylabel(f'internet {type}')
     x_min = -0.1
     y_max = 1.3
-    ax[i].plot([x_min, 1.2], [x_min, 1.2], ls="--", c="grey")
+    ax[i].plot([x_min, 1.2], [x_min, 1.2], ls="--", c=plot.MUTED)
     ax[i].set_xlim(x_min,y_max)
     ax[i].set_ylim(x_min,y_max)
     #ax[i].text(0.05, 1.2, f"mean diff: {df_diff[f'diff_{type}'].mean():.2f}", fontsize=12)

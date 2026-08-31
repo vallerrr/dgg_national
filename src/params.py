@@ -395,38 +395,13 @@ for age_range in age_lst:
     age_cols_dict[f'{age_range[0]}_{age_range[1]}']=[fb_col,pop_col]
 
 """
-# Project palette, rebuilt 2026-08-05 for colour-vision accessibility (D23).
-# Constructed in OKLCH so every hue sits inside the readable lightness band with enough chroma not
-# to read as grey, then ordered to maximise separation under simulated protanopia and deuteranopia.
-# The previous palette failed both discriminability checks (purple vs blue: ΔE 8.2 normal-vision,
-# 2.8 protan, against floors of 15 and 8); this one reaches 23.3 and 11.2.
-colors = {
-    'teal':    '#009F89',
-    'orange':  '#E18528',
-    'purple':  '#6C44A4',
-    'rose':    '#DD7577',
-    'sky':     '#43B2E1',
-    'olive':   '#85861F',
-    'blue':    '#2D72C4',
-    'magenta': '#B53C7F',
-}
-
-# Names used by the older scripts, mapped onto the nearest new hue so they keep resolving.
-colors.update({
-    'light_blue': colors['sky'],
-    'red': colors['rose'],
-    'peach': colors['orange'],
-    'soft_pink': colors['magenta'],
-    'warm_yellow': colors['olive'],
-})
-
 # ====================================================================================================
 # visualisation style (§6) — every figure reads from here, nothing hardcoded inline
 # ====================================================================================================
-# Categorical assignment order: the sequence that maximises the worst adjacent separation under
-# simulated protanopia and deuteranopia. Assign hues in this order and never cycle past the eighth
-# slot — a ninth series folds into "Other", small multiples, or a highlight-plus-context treatment.
-plot_color_order = ['teal', 'orange', 'purple', 'rose', 'sky', 'olive', 'blue', 'magenta']
+# The colour scheme moved out to `src/shared_style.py` on 2026-08-31 (D52, superseding D23). It is
+# re-exported here unchanged so `params.colors`, `params.plot_color_order` and `params.STYLE` keep
+# resolving for everything that already reads them. Edit the palette there, not here.
+from shared_style import colors, plot_color_order, STYLE       # noqa: F401  (re-export)
 
 # Sub-Saharan Africa subregion split used by the trend figures, preserved from
 # analysis/technical_report/trend.qmd. `region2` is the World Bank region, except that
@@ -440,16 +415,9 @@ ssa_subregions = {
     'Southern Africa': ['BWA', 'LSO', 'NAM', 'SWZ', 'ZAF'],
 }
 
-STYLE = {
-    "colors":   [colors[k] for k in plot_color_order],
-    "figsize":  (12, 7),
-    "title_fs": 16,
-    "label_fs": 13,
-    "tick_fs":  11,
-    "dpi":      300,
-    "save":     False,          # True -> write figures to savedir
-    "savedir":  FIG,
-}
+# `savedir` is the only style key that depends on a path, so it is set here rather than in
+# shared_style.py, which deliberately imports nothing from the project.
+STYLE["savedir"] = FIG
 
 # `utils.print_models_with_loco` orders regressors by fb then background columns.
 # fb_cols was referenced but never defined; it is the fb variable list.
