@@ -15,6 +15,12 @@ or from men losing it, and those are not the same finding. Every output therefor
 direction of **parity** and the direction of **female access** as separate fields, and the typology
 never labels a male-decline convergence as an access gain.
 
+The typology has **five** categories, which is the whole of what the identity can support: whether
+the gap narrowed, widened, or did neither; and, when it narrowed, whether women gained access or men
+lost it. Finer splits (female-led against shared expansion, contraction against expansion within a
+male-driven convergence) were dropped — they subdivide a reading rather than change it, and at seven
+or eight classes no figure legend stayed readable. See D50.
+
 Zeros are excluded rather than patched: log(0) is undefined and no constant is added to the primary
 results. A separate epsilon sensitivity is reported so the cost of that choice is visible.
 
@@ -52,79 +58,62 @@ WEIGHT_YEAR = 2015   # fixed base-year population weights (see `load_population`
 # codebook
 # ====================================================================================================
 CODEBOOK = [
-    dict(code=1, label='Female-led expansion',
+    dict(code=1, label='Converging - male decreasing',
+         parity='improving', female_access='stable or contracting',
+         rule='delta > tau; f <= tau',
+         reading='The gap narrowed without women gaining access: male adoption fell, or fell '
+                 'faster than a female level that was flat or falling. A parity improvement '
+                 'WITHOUT access expansion - must not be reported as improved digital access.'),
+    dict(code=2, label='Converging - female increasing',
          parity='improving', female_access='expanding',
-         rule='delta > tau; f > tau; m <= tau',
-         reading='Women gained access and the gap narrowed; men flat or declining. Both a parity '
-                 'improvement and an access expansion for women.'),
-    dict(code=2, label='Shared expansion with convergence',
-         parity='improving', female_access='expanding',
-         rule='delta > tau; f > tau; m > tau',
-         reading='Both sexes gained access, women proportionally faster. Parity improvement '
-                 'accompanied by access expansion for both.'),
-    dict(code=3, label='Convergence through male decline',
-         parity='improving', female_access='stable',
-         rule='delta > tau; |f| <= tau; m < -tau',
-         reading='The gap narrowed because male adoption fell, not because women gained access. '
-                 'A parity improvement WITHOUT access expansion — must not be reported as improved '
-                 'digital access.'),
-    dict(code=4, label='Shared contraction with convergence',
-         parity='improving', female_access='contracting',
-         rule='delta > tau; f < -tau; m < -tau',
-         reading='Both sexes lost access, men faster. A parity improvement during access '
-                 'contraction — must not be reported as improved digital access.'),
-    dict(code=5, label='Divergence during expansion',
-         parity='worsening', female_access='expanding or stable',
-         rule='delta < -tau; m > tau; f > -tau',
-         reading='Access grew but men gained proportionally faster, so the gap widened.'),
-    dict(code=6, label='Female-led contraction and divergence',
-         parity='worsening', female_access='contracting',
-         rule='delta < -tau; f < -tau',
-         reading='Female adoption fell and the gap widened.'),
-    dict(code=8, label='At or above parity throughout',
+         rule='delta > tau; f > tau',
+         reading='The gap narrowed and women gained access: female adoption rose, and rose '
+                 'proportionally faster than male adoption (which may have risen, been flat, or '
+                 'fallen). Both a parity improvement and an access expansion for women.'),
+    dict(code=3, label='Divergence',
+         parity='worsening', female_access='varies',
+         rule='delta < -tau',
+         reading='The gap widened: male adoption rose proportionally faster than female adoption, '
+                 'or female adoption fell faster than male adoption.'),
+    dict(code=4, label='At or above parity throughout',
          parity='at parity', female_access='varies',
          rule='female >= male at BOTH endpoints (requires level_ceiling_ctrl)',
          reading='Women\'s predicted adoption met or exceeded men\'s at both endpoints, so there '
                  'was no gap against women to close. Reported as a standing state, not as change. '
-                 'A country that crosses INTO parity during the window is not in this category — '
-                 'its convergence is the finding and it keeps its convergence category.'),
-    dict(code=7, label='Ambiguous or negligible change',
+                 'A country that crosses INTO parity during the window is not in this category - '
+                 'its convergence is the finding, and it keeps its convergence category.'),
+    dict(code=5, label='Negligible change',
          parity='stable', female_access='varies',
-         rule='|delta| <= tau, or a sign pattern not covered above',
-         reading=f'Parity change below the {TAU} log-point threshold, or a combination of level '
-                 'changes with no clear reading.'),
+         rule='|delta| <= tau',
+         reading=f'Parity change below the {TAU} log-point threshold in either direction.'),
 ]
 
-# categories where parity improves but women did not gain access
-PARITY_WITHOUT_ACCESS = {3, 4}
+# the category where parity improves but women did not gain access
+PARITY_WITHOUT_ACCESS = {1}
 
 
 def classify(f, m):
     """
     assign one typology code to a country-period
 
-    Mutually exclusive and exhaustive by construction: the branches are evaluated in order and the
-    final `else` catches every remaining sign pattern. `f` and `m` are log changes in female and
-    male adoption; `delta = f - m` is the log change in the GGI.
+    Mutually exclusive and exhaustive by construction: `delta` is either below the threshold in
+    absolute value, positive, or negative, and the convergence branch splits on one further test.
+    `f` and `m` are log changes in female and male adoption; `delta = f - m` is the log change in
+    the GGI. Code 4 is assigned afterwards, in `decompose`, because standing parity is a property of
+    the endpoints rather than of the changes.
     """
     if not np.isfinite(f) or not np.isfinite(m):
         return np.nan
     delta = f - m
 
     if abs(delta) <= TAU:
-        return 7
-    if delta > 0:                                  # parity improving
-        if f > TAU:
-            return 2 if m > TAU else 1
-        if f < -TAU:
-            return 4 if m < -TAU else 7
-        return 3 if m < -TAU else 7                # female flat: only a male decline can explain it
-    # parity worsening
-    if f < -TAU:
-        return 6
-    if m > TAU:
-        return 5
-    return 7
+        return 5                                   # negligible
+    if delta < 0:
+        return 3                                   # divergence
+    # parity improving: the mechanism is the female side if women actually gained access, and the
+    # male side otherwise - a flat or falling female level can only have closed the gap because the
+    # male level fell further.
+    return 2 if f > TAU else 1
 
 
 # ====================================================================================================
@@ -178,7 +167,16 @@ def filter_report(cut=None):
 
 def load_population():
     """
-    sex-specific adult population, fixed at the base year
+    total population aged 15-49, both sexes, fixed at the base year
+
+    **One weight per country, not one per sex.** The age band is the DHS/MICS interview universe
+    (15-49), so the weighted shares below are read as "the share of the population the ground truth
+    is drawn from", and the same denominator applies to the female series, the male series and the
+    country counts alike. A sex-specific denominator would make the female and male components of
+    the same regional aggregate refer to different populations. See D50.
+
+    The UN panel carries no 15-49 column, so it is summed from the bands that tile it exactly:
+    15-19, 20-24 and 25-49.
 
     Weights are held at `WEIGHT_YEAR` rather than moving with time for two reasons: the UN file
     stops at 2024 so 2025 has no population of its own (doc/data_updates.md), and fixed weights keep
@@ -186,11 +184,11 @@ def load_population():
     adoption change with population composition change, which is not what this decomposition claims
     to measure.
     """
-    pop = pd.read_csv(params.UN_POP_PROCESSED,
-                      usecols=['iso3', 'Year', '18_inf_m', '18_inf_f'])
-    pop = pop[pop['Year'] == WEIGHT_YEAR]
-    return pop.rename(columns={'iso3': 'gid_0', '18_inf_f': 'pop_female', '18_inf_m': 'pop_male'})[
-        ['gid_0', 'pop_female', 'pop_male']]
+    bands = ['15_19_t', '20_24_t', '25_49_t']      # tile 15-49 exactly, no overlap
+    pop = pd.read_csv(params.UN_POP_PROCESSED, usecols=['iso3', 'Year'] + bands)
+    pop = pop[pop['Year'] == WEIGHT_YEAR].copy()
+    pop['pop_15_49'] = pop[bands].sum(axis=1)
+    return pop.rename(columns={'iso3': 'gid_0'})[['gid_0', 'pop_15_49']]
 
 
 # ====================================================================================================
@@ -261,10 +259,10 @@ def decompose(levels, indicator, t0, t1, epsilon=0.0, ceiling=None):
     out['category'] = [classify(f, m) for f, m in zip(out['female_component'], out['male_log_change'])]
 
     # Standing parity is a state, not a change. With the ceiling on, these rows already classify as
-    # 7 (both capped GGIs equal 1, so delta is exactly 0); code 8 separates them from genuine
+    # 5 (both capped GGIs equal 1, so delta is exactly 0); code 4 separates them from genuine
     # below-threshold movement without touching any other category.
     if ceiling:
-        out.loc[out['at_parity_both'], 'category'] = 8
+        out.loc[out['at_parity_both'], 'category'] = 4
 
     labels = {c['code']: c['label'] for c in CODEBOOK}
     out['category_label'] = out['category'].map(labels)
@@ -337,14 +335,14 @@ def attach_weights(dec, pop):
 
 
 def category_summary(dec, groupby=None):
-    """counts and shares per category, unweighted and weighted by adult female population"""
+    """counts and shares per category, unweighted and weighted by the 15-49 population (D50)"""
     keys = ['indicator', 'interval'] + (groupby or [])
     labels = {c['code']: c['label'] for c in CODEBOOK}
 
     frames = []
     for key_vals, block in dec.groupby(keys):
         total_n = len(block)
-        total_w = block['pop_female'].sum()
+        total_w = block['pop_15_49'].sum()
         for code in sorted(labels):
             sub = block[block['category'] == code]
             row = dict(zip(keys, key_vals if isinstance(key_vals, tuple) else (key_vals,)))
@@ -352,7 +350,7 @@ def category_summary(dec, groupby=None):
                 'category': code, 'category_label': labels[code],
                 'n_countries': len(sub),
                 'share_unweighted': len(sub) / total_n if total_n else np.nan,
-                'share_pop_weighted': (sub['pop_female'].sum() / total_w) if total_w else np.nan,
+                'share_pop_weighted': (sub['pop_15_49'].sum() / total_w) if total_w else np.nan,
                 'parity_improved_without_access_gain': code in PARITY_WITHOUT_ACCESS,
             })
             frames.append(row)
@@ -379,9 +377,12 @@ def regional_aggregate(levels, pop):
     """
     decomposition of the regional aggregate, on population-weighted regional levels
 
-    Regional female level is the female-population-weighted mean of country female levels, and
-    likewise for men — so each sex is aggregated on its own denominator. Weights are fixed at the
-    base year, which keeps the identity exact at regional level too.
+    Both the regional female level and the regional male level are weighted means of the country
+    levels on the **same** denominator — the country's total population aged 15-49 (D50). One
+    denominator for both sexes is what makes the regional female and male components comparable:
+    with sex-specific weights the two halves of the same identity would describe different
+    populations. Weights are fixed at the base year, which keeps the identity exact at regional
+    level too.
     """
     merged = levels.merge(pop, on='gid_0', how='inner')
     rows = []
@@ -401,8 +402,8 @@ def regional_aggregate(levels, pop):
                 agg = {}
                 for yr in (t0, t1):
                     y = usable[usable['year'] == yr]
-                    agg[('f', yr)] = np.average(y[f_col], weights=y['pop_female'])
-                    agg[('m', yr)] = np.average(y[m_col], weights=y['pop_male'])
+                    agg[('f', yr)] = np.average(y[f_col], weights=y['pop_15_49'])
+                    agg[('m', yr)] = np.average(y[m_col], weights=y['pop_15_49'])
                 fc = np.log(agg[('f', t1)]) - np.log(agg[('f', t0)])
                 mc = -(np.log(agg[('m', t1)]) - np.log(agg[('m', t0)]))
                 rows.append({

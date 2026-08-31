@@ -8,7 +8,7 @@ from operator import index
 
 import pandas as pd
 import params
-from params import latest_contrl,missing_contrl,rolling_contrl,del_country_contrl,model_folder
+from params import latest_contrl,missing_contrl,rolling_contrl,del_country_contrl
 import utils
 
 df_fb_data = pd.read_csv(params.PROCESSED / f'fb_data/fb_all_sd_monthly{"_rolling" if rolling_contrl else ""}.csv')

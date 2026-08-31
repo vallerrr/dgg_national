@@ -147,7 +147,10 @@ latest_contrl = False  # whether to keep the latest survey for each country
 missing_contrl = True
 rolling_contrl = True
 del_country_contrl = False
-model_folder = '18_plus'  # folder to store the models
+# The model folder is NOT a control any more. The production folder is
+# `FINAL_MODEL['model_folder']` ('OLS'), which is what modelling.py, model_performance.py and
+# scripts/prediction.py read. `18_plus` held the random-forest pickles; the RF line was retired by
+# D13 and its notebooks archived by D51, so nothing chooses a folder here.
 
 SEED = 42  # §9: every randomised step reads this
 

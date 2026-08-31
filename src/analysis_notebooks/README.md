@@ -24,7 +24,7 @@ Each notebook writes to a folder named after itself:
 | `06_coherent_ggi_decomposition.ipynb` | the exact decomposition, on the filtered series (D43) | 04 | **runs** |
 | `07_aggregation_methods.ipynb` | the aggregation audit | 04 | **runs** |
 | `08_prediction_and_convergence.ipynb` | prediction maps, beta/sigma convergence — calls `convergence` | 04's annual panel | **runs** (D47, D48, D49) |
-| `09_post_analysis_trend.ipynb` | trend comparison | — | partial — missing model folder |
+| `09_direct_ggi_trend_figures.ipynb` | the trend figures on the **directly predicted** GGI — `trend.qmd` ported, with its uncertainty ribbons and event annotations; national-vs-subnational; ground-truth coverage | the golden series, the subnational aggregate, the survey ground truth | **runs** (D51) |
 | `10`, `11` adolescent | a separate analysis line | — | not part of the national pipeline |
 | `12_s1_investigations.ipynb` | supplementary checks | — | partial |
 | `13_extended_panel_exploration.ipynb` | the panel plus the new surveys, refit and re-validated; **§4 the new surveys under both models**, **§5 the `gdp_pcap` vintage test** | the fitting panel, the survey ground truth, FB, offline predictors, WDI API | **runs** — exploration only (D39, D44, D45) |
