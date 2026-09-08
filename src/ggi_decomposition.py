@@ -24,6 +24,11 @@ or eight classes no figure legend stayed readable. See D50.
 Zeros are excluded rather than patched: log(0) is undefined and no constant is added to the primary
 results. A separate epsilon sensitivity is reported so the cost of that choice is visible.
 
+The two aggregate tables (`category_by_group`, `group_aggregate`) are built under **every**
+categorisation in `GROUPINGS` — `continent` and the World Bank `region` — and stacked into one table
+each, tagged by a `grouping` column with the value in `group`. Choosing one is then a parameter in
+the notebook rather than a rerun of this script.
+
     python src/ggi_decomposition.py
 """
 from datetime import datetime
@@ -56,6 +61,13 @@ TAU = 0.013          # log-point threshold for "meaningful"; ~1.3% relative chan
 TOLERANCE = 1e-12    # the decomposition identity is exact, so the tolerance is machine-level
 EPSILON = 0.001      # sensitivity only — never used in the primary results
 WEIGHT_YEAR = 2015   # fixed base-year population weights (see `load_population`)
+
+# How countries are grouped for the aggregate tables. Both categorisations are built on every run
+# and stacked into one table each, tagged by `grouping`, so switching between them is a parameter in
+# the notebook rather than a rerun of this script. `continent` is the default: the World Bank regions
+# mix geography with income and administrative history ("Europe & Central Asia" is one region), which
+# reads as a claim this decomposition does not make.
+GROUPINGS = ['continent', 'region']
 
 
 # ====================================================================================================
@@ -361,10 +373,28 @@ def category_summary(dec, groupby=None):
     return pd.DataFrame(frames)
 
 
+def category_by_group(dec, groupings=None):
+    """
+    the same category shares under every categorisation, stacked into one table
+
+    One frame rather than one per categorisation, so the notebook selects with a filter instead of
+    a filename: `grouping` names the categorisation ('continent', 'region') and `group` carries the
+    value. Shares are computed within a group, so they still sum to 1 across the categories of any
+    one group whichever categorisation is in force.
+    """
+    frames = []
+    for grouping in (groupings or GROUPINGS):
+        block = category_summary(dec, [grouping]).rename(columns={grouping: 'group'})
+        frames.append(block.assign(grouping=grouping))
+    out = pd.concat(frames, ignore_index=True)
+    lead = ['indicator', 'interval', 'grouping', 'group']
+    return out[lead + [c for c in out.columns if c not in lead]]
+
+
 def extremes(dec, n=20):
     """largest parity improvements and deteriorations over the primary interval"""
     block = dec[dec['interval'] == f'{PRIMARY[0]}-{PRIMARY[1]}']
-    cols = ['indicator', 'gid_0', 'country', 'region', 'delta_log_ggi',
+    cols = ['indicator', 'gid_0', 'country', 'continent', 'region', 'delta_log_ggi',
             'female_component', 'male_component', 'category_label',
             'parity_direction', 'female_access_direction',
             'parity_improved_without_access_gain']
@@ -377,16 +407,19 @@ def extremes(dec, n=20):
     return pd.concat(rows, ignore_index=True)
 
 
-def regional_aggregate(levels, pop):
+def group_aggregate(levels, pop, groupings=None):
     """
-    decomposition of the regional aggregate, on population-weighted regional levels
+    decomposition of the group aggregate, on population-weighted group levels
 
-    Both the regional female level and the regional male level are weighted means of the country
-    levels on the **same** denominator — the country's total population aged 15-49 (D50). One
-    denominator for both sexes is what makes the regional female and male components comparable:
-    with sex-specific weights the two halves of the same identity would describe different
-    populations. Weights are fixed at the base year, which keeps the identity exact at regional
-    level too.
+    Built for every categorisation in `groupings` and stacked into one table, tagged by `grouping`
+    with the value in `group` — the same shape as `category_by_group`, so the notebook switches
+    categorisation with a filter.
+
+    Both the group's female level and its male level are weighted means of the country levels on the
+    **same** denominator — the country's total population aged 15-49 (D50). One denominator for both
+    sexes is what makes the female and male components comparable: with sex-specific weights the two
+    halves of the same identity would describe different populations. Weights are fixed at the base
+    year, which keeps the identity exact at group level too.
     """
     merged = levels.merge(pop, on='gid_0', how='inner')
     rows = []
@@ -396,34 +429,36 @@ def regional_aggregate(levels, pop):
             # cap per country before weighting, matching the country-level treatment
             merged = merged.copy()
             merged[f_col] = np.minimum(merged[f_col], merged[m_col])
-        for t0, t1 in [PRIMARY] + EXTRA_INTERVALS:
-            for region, block in merged.groupby('region'):
-                b = block[block['year'].isin([t0, t1])]
-                usable = b.groupby('gid_0').filter(
-                    lambda g: len(g) == 2 and g[[f_col, m_col]].gt(0).all().all())
-                if usable.empty:
-                    continue
-                agg = {}
-                for yr in (t0, t1):
-                    y = usable[usable['year'] == yr]
-                    agg[('f', yr)] = np.average(y[f_col], weights=y['pop_15_49'])
-                    agg[('m', yr)] = np.average(y[m_col], weights=y['pop_15_49'])
-                fc = np.log(agg[('f', t1)]) - np.log(agg[('f', t0)])
-                mc = -(np.log(agg[('m', t1)]) - np.log(agg[('m', t0)]))
-                rows.append({
-                    'indicator': indicator, 'interval': f'{t0}-{t1}', 'region': region,
-                    'n_countries': usable['gid_0'].nunique(),
-                    'female_level_t0': agg[('f', t0)], 'female_level_t1': agg[('f', t1)],
-                    'male_level_t0': agg[('m', t0)], 'male_level_t1': agg[('m', t1)],
-                    'ggi_t0': agg[('f', t0)] / agg[('m', t0)],
-                    'ggi_t1': agg[('f', t1)] / agg[('m', t1)],
-                    'female_component': fc, 'male_component': mc,
-                    'delta_log_ggi': fc + mc,
-                    'parity_direction': 'improving' if fc + mc > TAU else
-                                        'worsening' if fc + mc < -TAU else 'stable',
-                    'female_access_direction': 'expanding' if fc > TAU else
-                                               'contracting' if fc < -TAU else 'stable',
-                })
+        for grouping in (groupings or GROUPINGS):
+            for t0, t1 in [PRIMARY] + EXTRA_INTERVALS:
+                for group, block in merged.groupby(grouping):
+                    b = block[block['year'].isin([t0, t1])]
+                    usable = b.groupby('gid_0').filter(
+                        lambda g: len(g) == 2 and g[[f_col, m_col]].gt(0).all().all())
+                    if usable.empty:
+                        continue
+                    agg = {}
+                    for yr in (t0, t1):
+                        y = usable[usable['year'] == yr]
+                        agg[('f', yr)] = np.average(y[f_col], weights=y['pop_15_49'])
+                        agg[('m', yr)] = np.average(y[m_col], weights=y['pop_15_49'])
+                    fc = np.log(agg[('f', t1)]) - np.log(agg[('f', t0)])
+                    mc = -(np.log(agg[('m', t1)]) - np.log(agg[('m', t0)]))
+                    rows.append({
+                        'indicator': indicator, 'interval': f'{t0}-{t1}',
+                        'grouping': grouping, 'group': group,
+                        'n_countries': usable['gid_0'].nunique(),
+                        'female_level_t0': agg[('f', t0)], 'female_level_t1': agg[('f', t1)],
+                        'male_level_t0': agg[('m', t0)], 'male_level_t1': agg[('m', t1)],
+                        'ggi_t0': agg[('f', t0)] / agg[('m', t0)],
+                        'ggi_t1': agg[('f', t1)] / agg[('m', t1)],
+                        'female_component': fc, 'male_component': mc,
+                        'delta_log_ggi': fc + mc,
+                        'parity_direction': 'improving' if fc + mc > TAU else
+                                            'worsening' if fc + mc < -TAU else 'stable',
+                        'female_access_direction': 'expanding' if fc > TAU else
+                                                   'contracting' if fc < -TAU else 'stable',
+                    })
     return pd.DataFrame(rows)
 
 
@@ -467,9 +502,9 @@ def main():
         'sensitivity': sensitivity(levels),
         'identity_check': identity,
         'category_global': category_summary(dec),
-        'category_regional': category_summary(dec, ['region']),
+        'category_by_group': category_by_group(dec),
         'extremes': extremes(dec),
-        'regional_aggregate': regional_aggregate(levels, pop),
+        'group_aggregate': group_aggregate(levels, pop),
     }
     for name, frame in outputs.items():
         path = OUTDIR / f'{PREFIX}_{name}_{stamp}.csv'

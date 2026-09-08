@@ -388,6 +388,346 @@ def build_unseen_surveys(comparison, levels):
     return out.sort_values(['indicator', 'year', 'gid_0'], ignore_index=True)
 
 
+# ====================================================================================================
+# G. coverage — what the surveys observe against what the model predicts
+# ====================================================================================================
+# The sections above ask how good a prediction is. This one asks the prior question: how much there
+# was to predict from. The DHS/MICS panel is a few dozen country-years in a few dozen countries; the
+# published series is every country at every time point. The ratio between the two is the reason the
+# model exists and it appears in no accuracy table.
+#
+# Two grains meet here, and neither is converted into the other:
+#   * a survey is a country-YEAR. The recodes carry a fieldwork month, the harmonised panel does
+#     not, so a survey is placed at its year and never at a month.
+#   * a prediction is a country-MONTH from 2019 on and a country-YEAR before it — the published
+#     series is annual (January) for 2015-2018 and monthly from 2019-01. Counts here are over the
+#     series' own time points, so one row is one published estimate, not one calendar month.
+#
+# A survey that reads both indicators is TWO observations, one per model, and is counted twice
+# wherever the counts are split by indicator: the internet panel sees 88 of them and the mobile
+# panel 89, over 89 distinct country-years. The distinct counts are the ones to quote in prose.
+#
+# The window is the project's analysis window, not the series' extent: the published series runs
+# into 2026, which is a part-year, and every result in the paper stops at the last complete year.
+# One source for it — params.CONVERGENCE['window'] (D48) — so a coverage count and a convergence
+# estimate can never be quoted over different spans.
+COVERAGE_WINDOW = params.CONVERGENCE['window']
+
+
+def load_prediction_series():
+    """the published country-month series, long by indicator — the coverage denominator"""
+    pred = pd.read_csv(CGGI['source'], usecols=['gid_0', 'outcome', 'predicted', 'date'])
+    wanted = {f'{ind}_fm_ratio': ind for ind in INDICATORS}
+    pred = pred[pred['outcome'].isin(wanted)].dropna(subset=['predicted']).copy()
+    pred['indicator'] = pred['outcome'].map(wanted)
+    pred['year'] = pred['date'].str.slice(0, 4).astype(int)
+    return pred.drop(columns=['outcome', 'predicted'])
+
+
+def fitted_panel(variant=None):
+    """
+    what each model was actually fitted on, {indicator: frame[iso3, year, source]}
+
+    Read straight off the fitting panel, so it needs reconciling with nothing: these rows ARE the
+    rows the OLS saw. `source` splits them into the DHS/MICS surveys and the ITU administrative
+    rows that the `_with_CIS` variants keep (D37) — 71 + 37 = 108 for internet, 75 + 24 = 99 for
+    mobile, which is the ledger.
+
+    Deduplicated on (iso3, year, source), because coverage is a question about country-years, not
+    rows: mobile fits GIN 2018, TGO 2017 and ZMB 2018 twice (D28), so its 99 rows are 96
+    country-years. No country-year carries both sources, and no country carries both.
+
+    The 2023-2025 refresh surveys are ground truth but were never fitted, so they are absent here
+    by construction — section 3's held-out validation exists precisely because of that.
+    """
+    variant = variant or CFG['model_type']
+    out = {}
+    for ind in INDICATORS:
+        panel = load_panel(ind, params.MODEL_VARIANTS[variant]['keep_itu'])
+        is_itu = panel[f'{ind}_survey_type'].astype(str).str.contains('itu', case=False, na=False)
+        frame = pd.DataFrame({'iso3': panel['iso3'],
+                              'year': panel[f'{ind}_year'].astype(int),
+                              'source': np.where(is_itu, 'itu', 'survey')})
+        out[ind] = frame.drop_duplicates(ignore_index=True)
+    return out
+
+
+def build_coverage(prediction, panel, window=COVERAGE_WINDOW):
+    """
+    one row per indicator x country x published time point, flagged `surveyed` and `itu`
+
+    `panel` is `fitted_panel()`'s dict. A flag is True at every time point of a year in which that
+    country has a fitted row of that source, so an observation lights up its whole year. That is
+    the country-YEAR fact drawn on the country-month grid — the harmonised panel carries no
+    fieldwork month, and none is invented here.
+
+    `window` clips the prediction side to the analysis window, complete calendar years only
+    (COVERAGE_WINDOW). The fitted side is already inside it: the panel ends in 2022.
+    """
+    lo, hi = window
+    prediction = prediction[prediction['year'].between(lo, hi)]
+    frames = []
+    for ind in INDICATORS:
+        grid = (prediction[prediction['indicator'] == ind][['gid_0', 'date', 'year']]
+                .drop_duplicates().copy())
+        grid['indicator'] = ind
+        for source in ('survey', 'itu'):
+            rows = panel[ind][panel[ind]['source'] == source]
+            seen = set(map(tuple, rows[['iso3', 'year']].to_numpy()))
+            grid['surveyed' if source == 'survey' else 'itu'] = [
+                (c, y) in seen for c, y in zip(grid['gid_0'], grid['year'])]
+        frames.append(grid)
+    out = pd.concat(frames, ignore_index=True)
+    # `utils.mark_regions` is the project's one way to attach geography to an iso3, and it carries
+    # the hand fixes (Saint Helena and Kosovo are absent from both reference files). Continent is
+    # the grouping — CONVERGENCE['group'] settled on one for the whole project — and the World Bank
+    # region rides along so the exported table can be cut either way.
+    geography = utils.mark_regions(pd.DataFrame({'iso3': sorted(out['gid_0'].unique())}))
+    out = out.merge(geography[['iso3', 'conti', 'region']], left_on='gid_0', right_on='iso3',
+                    how='left').drop(columns='iso3')
+    return out.sort_values(['indicator', 'gid_0', 'date'], ignore_index=True)
+
+
+def _country_years(block, flag):
+    """the distinct country-years a flag lights, by year — the grid repeats each one per month"""
+    lit = block[block[flag]].drop_duplicates(['gid_0', 'year'])
+    return lit.groupby('year').size(), lit['gid_0'].nunique(), len(lit)
+
+
+def coverage_by_year(coverage):
+    """what was observed against what was published, by calendar year"""
+    rows = []
+    for ind in INDICATORS:
+        block = coverage[coverage['indicator'] == ind]
+        frame = pd.DataFrame({
+            'countries_predicted': block.groupby('year')['gid_0'].nunique(),
+            'time_points': block.groupby('year')['date'].nunique(),
+            'country_months': block.groupby('year').size()}).reset_index()
+        frame['indicator'] = ind
+        for flag, column in (('surveyed', 'surveys'), ('itu', 'itu')):
+            per_year, _, _ = _country_years(block, flag)
+            frame[column] = frame['year'].map(per_year).fillna(0).astype(int)
+        frame['countries_surveyed'] = frame['surveys']   # one survey per country per year
+        rows.append(frame)
+    out = pd.concat(rows, ignore_index=True)
+    return out[['indicator', 'year', 'countries_predicted', 'countries_surveyed', 'surveys', 'itu',
+                'time_points', 'country_months']]
+
+
+def coverage_by_continent(coverage, group='conti'):
+    """
+    per continent: countries predicted, and what ground truth the model had for them
+
+    Three exclusive classes, because a country is in at most one of them (no country carries both
+    a fitted survey and a fitted ITU row): a survey, an ITU row only, or nothing at all. The last
+    is the figure's subject and is a subtraction, so the three can never disagree with the total.
+    """
+    rows = []
+    for ind in INDICATORS:
+        block = coverage[coverage['indicator'] == ind]
+        flags = block.groupby([group, 'gid_0'])[['surveyed', 'itu']].any().reset_index()
+        frame = (flags.groupby(group)
+                 .agg(countries_predicted=('gid_0', 'nunique'),
+                      countries_surveyed=('surveyed', 'sum'),
+                      countries_itu=('itu', 'sum'))
+                 .reset_index())
+        frame['indicator'] = ind
+        frame['countries_no_ground_truth'] = (frame['countries_predicted']
+                                              - frame['countries_surveyed']
+                                              - frame['countries_itu'])
+        rows.append(frame)
+    out = pd.concat(rows, ignore_index=True)
+    return out[['indicator', group, 'countries_predicted', 'countries_surveyed', 'countries_itu',
+                'countries_no_ground_truth']].sort_values(
+                    ['indicator', 'countries_no_ground_truth'], ascending=[True, False],
+                    ignore_index=True)
+
+
+def coverage_totals(coverage):
+    """the headline counts, one row per indicator — the numbers the coverage figure annotates"""
+    rows = []
+    for ind in INDICATORS:
+        block = coverage[coverage['indicator'] == ind]
+        _, survey_countries, survey_years = _country_years(block, 'surveyed')
+        _, itu_countries, itu_years = _country_years(block, 'itu')
+        countries = block['gid_0'].nunique()
+        rows.append({
+            'indicator': ind,
+            'countries_predicted': countries,
+            'countries_surveyed': survey_countries,
+            'countries_itu': itu_countries,
+            'countries_no_ground_truth': countries - survey_countries - itu_countries,
+            'survey_country_years': survey_years,
+            'itu_country_years': itu_years,
+            'fitted_country_years': survey_years + itu_years,
+            'time_points': block['date'].nunique(),
+            'first_date': block['date'].min(), 'last_date': block['date'].max(),
+            'last_fitted_year': int(block.loc[block['surveyed'] | block['itu'], 'year'].max()),
+            'country_months_predicted': len(block),
+            # one published estimate for every fitted country-year, survey or ITU
+            'enrichment_factor': len(block) / (survey_years + itu_years),
+        })
+    return pd.DataFrame(rows)
+
+
+# ====================================================================================================
+# H. the production models themselves — held-out predictions, and the coefficient table
+# ====================================================================================================
+# Sections A-F score the models; this one shows them. Two artefacts come out of one pass over the
+# six production fits, so a coefficient and the point it draws can never come from different runs:
+#
+#   * predicted against observed, country by country — the LOCO prediction, never the in-sample fit.
+#     An in-sample scatter of a 7-term model on 108 rows is a picture of the fit, not of what the
+#     model does for a country it has not seen, which is the only case the model exists for.
+#   * the coefficient table, in the LaTeX the manuscript's Table S2 already uses.
+#
+# `conti` is the panel's own continent column — six values, which is exactly the palette's cap.
+COEF_LABELS = {
+    'const': 'Constant',
+    'fb_18_999_men': 'Facebook (18+) Men',
+    'fb_18_999_wom': 'Facebook (18+) Women',
+    'fb_18_999_r': 'Facebook (18+) Gender Ratio',
+    'hdi': 'HDI',
+    'gdi': 'GDI',
+    'gdp_pcap': 'GDP Per Capita (log)',
+    'year': 'Year (Relative to 2015)',
+}
+OUTCOME_LABELS = {'ggi': 'GGI', 'wom': 'Women', 'men': 'Men'}
+CONTINENT_COLUMN = 'conti'
+# Alphabetical, so a continent keeps its hue in every figure that draws one (plotting.categorical).
+CONTINENT_ORDER = ['Africa', 'Asia', 'Europe', 'North America', 'Oceania', 'South America']
+
+
+def production_fits(variant=None):
+    """
+    the six fitted models, {(indicator, outcome_var): statsmodels result}
+
+    Refits rather than unpickling: D14 forbids writing into a model directory, and section B has
+    already established that the refit reproduces every shipped pickle to 1e-14, so the refit is
+    the shipped model and comes with the full result object a coefficient table needs.
+    """
+    variant = variant or CFG['model_type']
+    fits = {}
+    for indicator in CFG['indicators']:
+        data = load_panel(indicator, params.MODEL_VARIANTS[variant]['keep_itu'])
+        for outcome_var in CFG['outcome_vars']:
+            spec = params.resolve_spec(variant, outcome_var)
+            fits[(indicator, outcome_var)] = sm.OLS(
+                data[f'{indicator}_{outcome_var}'], sm.add_constant(data[spec]),
+                missing='drop').fit()
+    return fits
+
+
+def build_loco_predictions(variant=None):
+    """
+    one row per fitted country-year x outcome: observed, held-out predicted, and who it is
+
+    `survey_type` travels with the row because a third of the internet panel is ITU rather than a
+    survey (D37); it is the same model and the same sample, but a reader comparing this against
+    the survey validation in section F needs to see which points are which.
+    """
+    variant = variant or CFG['model_type']
+    keep = ['iso3', CONTINENT_COLUMN]
+    rows = []
+    for indicator in CFG['indicators']:
+        data = load_panel(indicator, params.MODEL_VARIANTS[variant]['keep_itu'])
+        for outcome_var in CFG['outcome_vars']:
+            spec = params.resolve_spec(variant, outcome_var)
+            outcome = f'{indicator}_{outcome_var}'
+            observed, predicted = loco(data, spec, outcome, CFG['leave_column'])
+            rows.append(pd.DataFrame({
+                'indicator': indicator, 'outcome': outcome_var,
+                **{c: data.loc[observed.index, c] for c in keep},
+                'year': data.loc[observed.index, f'{indicator}_year'],
+                'survey_type': data.loc[observed.index, f'{indicator}_survey_type'],
+                'observed': observed, 'predicted': predicted,
+            }))
+    out = pd.concat(rows, ignore_index=True)
+    out['error'] = out['predicted'] - out['observed']
+    return out
+
+
+def coefficient_table(fits):
+    """one row per model x term: coefficient, standard error, p-value, and the model's fit"""
+    rows = []
+    for (indicator, outcome_var), fit in fits.items():
+        for term in fit.params.index:
+            rows.append({'indicator': indicator, 'outcome': outcome_var, 'term': term,
+                         'label': COEF_LABELS.get(term, term),
+                         'coef': float(fit.params[term]), 'se': float(fit.bse[term]),
+                         'p': float(fit.pvalues[term]),
+                         'n': int(fit.nobs), 'r2': float(fit.rsquared),
+                         'adj_r2': float(fit.rsquared_adj)})
+    return pd.DataFrame(rows)
+
+
+def _stars(p, levels=((0.01, '***'), (0.05, '**'), (0.1, '*'))):
+    """the significance marks the manuscript's tables already use: *** 1%, ** 5%, * 10%"""
+    return next((mark for cut, mark in levels if p < cut), '')
+
+
+def coefficients_latex(table, caption='Model Coefficients for Adult Models (Age 18+)',
+                       label='tab:model_coefficients_adult', decimals=3):
+    """
+    the coefficient table as a LaTeX `table`, in the manuscript's Table S2 layout
+
+    Coefficient over standard error, stars on the coefficient, indicators as spanning column groups.
+    Needs `booktabs` in the preamble and nothing else — no `siunitx`, no `threeparttable`, so it
+    pastes into Overleaf as it stands.
+
+    Column order is FINAL_MODEL's own (`indicators` x `outcome_vars`) and row order is the spec's,
+    with the constant first: the table is then a transcript of the fitted model rather than a
+    hand-kept ordering that drifts from it.
+    """
+    models = [(ind, out) for ind in CFG['indicators'] for out in CFG['outcome_vars']]
+    terms = ['const'] + list(CFG['spec'])
+    keyed = table.set_index(['indicator', 'outcome', 'term'])
+
+    def cell(row, field, fmt):
+        return fmt.format(row[field]) if row is not None else ''
+
+    lines = [r'\begin{table}[!htbp]', r'\centering', f'\\caption{{{caption}}}',
+             f'\\label{{{label}}}',
+             r'\begin{tabular}{l' + 'c' * len(models) + '}', r'\toprule']
+    groups = [(ind, sum(1 for i, _ in models if i == ind)) for ind in CFG['indicators']]
+    lines.append(' & ' + ' & '.join(f'\\multicolumn{{{n}}}{{c}}{{{ind.capitalize()}}}'
+                                    for ind, n in groups) + r' \\')
+    start = 2
+    rules = []
+    for _, n in groups:
+        rules.append(f'\\cmidrule(lr){{{start}-{start + n - 1}}}')
+        start += n
+    lines.append(' '.join(rules))
+    lines.append(' & ' + ' & '.join(OUTCOME_LABELS[out] for _, out in models) + r' \\')
+    lines.append(r'\midrule')
+
+    for term in terms:
+        got = [keyed.loc[(ind, out, term)] if (ind, out, term) in keyed.index else None
+               for ind, out in models]
+        label_cell = COEF_LABELS.get(term, term)
+        # an insignificant coefficient carries no superscript at all — `$^{}$` renders as a gap
+        coefs = ['' if r is None else
+                 f'{r["coef"]:.{decimals}f}' + (f'$^{{{m}}}$' if (m := _stars(r['p'])) else '')
+                 for r in got]
+        ses = [cell(r, 'se', f'({{:.{decimals}f}})') for r in got]
+        lines.append(f'{label_cell} & ' + ' & '.join(coefs) + r' \\')
+        lines.append(' & ' + ' & '.join(ses) + r' \\')
+
+    lines.append(r'\midrule')
+    first = [keyed.loc[(ind, out, 'const')] for ind, out in models]
+    for name, field, fmt in [('R-squared', 'r2', '{:.3f}'), ('Adj. R-squared', 'adj_r2', '{:.3f}'),
+                             ('Observations', 'n', '{:.0f}')]:
+        lines.append(f'{name} & ' + ' & '.join(fmt.format(r[field]) for r in first) + r' \\')
+    lines += [r'\bottomrule', r'\end{tabular}',
+              r'\begin{flushleft}\footnotesize',
+              r'\textit{Notes:} Standard errors in parentheses. '
+              r'Leave-one-country-out $R^2$ is reported separately; '
+              r'the $R^2$ above is in-sample.\\',
+              r'$^{*}p<0.1$, $^{**}p<0.05$, $^{***}p<0.01$',
+              r'\end{flushleft}', r'\end{table}']
+    return '\n'.join(lines) + '\n'
+
+
 def main(variants):
     perf, checks = evaluate(variants)
     stamp = f'{datetime.now():%Y%m%d}'

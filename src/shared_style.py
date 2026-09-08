@@ -38,7 +38,7 @@ libraries, and nothing in `src/` parses it.
 # why `plot_color_order` fills the well-separated slots first and `plotting.categorical` refuses
 # past the sixth rather than cycling.
 colors = {
-    'red':          '#E66859',   # the warm end#E66859
+    'red':          '#E66859', 
     'cream':        '#FEE7BA',   # the ramp's midpoint — also what `plotting.diverging` centres on
     'light_blue':   '#75BBD4',
     'blue':         '#74ADD1',
