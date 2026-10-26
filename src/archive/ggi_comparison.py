@@ -39,6 +39,13 @@ DEFINITIONS = {
     'direct': '{ind}_ggi_direct',
 }
 
+# How countries are aggregated for the robustness check in section D/E. `region` is the World Bank's
+# and is the default, because it is what the main regional figure uses; `continent` is plain
+# geography and is what `06` and `08` group by (D56). Both are built on every run and stacked into
+# one table tagged by a `grouping` column, so the notebook switches with a parameter rather than a
+# rerun — the same arrangement ggi_decomposition.GROUPINGS uses.
+GROUPINGS = ['region', 'continent']
+
 
 # ====================================================================================================
 # inputs
@@ -238,13 +245,19 @@ def build_trends(annual, selection):
 # ====================================================================================================
 # D. regional robustness
 # ====================================================================================================
-def build_regional(annual):
+def build_regional(annual, grouping='region'):
     """
-    regional means under each definition, on an identical country sample and aggregation rule
+    group means under each definition, on an identical country sample and aggregation rule
 
-    Unweighted country means within World Bank region — the same aggregation the main regional
-    figure uses, so the only thing varying across the three panels is the definition.
+    Unweighted country means within the group — the same aggregation the main regional figure uses,
+    so the only thing varying across the three panels is the definition.
+
+    `grouping` is 'region' (the World Bank's, the default and what the main figure uses) or
+    'continent'. The grouping column keeps its own name in the output, so the default call returns
+    exactly the frame it always did; `main` stacks both under a `grouping` tag.
     """
+    if grouping not in GROUPINGS:
+        raise ValueError(f'grouping must be one of {GROUPINGS}, got {grouping!r}')
     rows = []
     for ind in INDICATORS:
         for name, template in DEFINITIONS.items():
@@ -252,13 +265,13 @@ def build_regional(annual):
             # count the countries that actually carry a value, not the rows in the block: after
             # the discrepancy filter those differ, and the mean is over the former
             g = (annual.assign(_id=annual['gid_0'].where(annual[col].notna()))
-                 .groupby(['region', 'year'], as_index=False)
+                 .groupby([grouping, 'year'], as_index=False)
                  .agg(value=(col, 'mean'), n_countries=('_id', 'nunique')))
             rows.append(g.assign(indicator=ind, definition=name))
     regional = pd.concat(rows, ignore_index=True)
 
     # 2015 / 2025 / change / rank per definition
-    wide = regional.pivot_table(index=['indicator', 'definition', 'region'],
+    wide = regional.pivot_table(index=['indicator', 'definition', grouping],
                                 columns='year', values='value')
     table = pd.DataFrame({
         'value_2015': wide[TREND_START],
@@ -272,18 +285,26 @@ def build_regional(annual):
     return regional, table.sort_values(['indicator', 'definition', 'rank_2025'], ignore_index=True)
 
 
-def rank_stability(table):
-    """where the definition changes the regional ordering — the load-bearing robustness check"""
+def rank_stability(table, grouping='region'):
+    """
+    where the definition changes the group ordering — the load-bearing robustness check
+
+    `max_value_spread` is the quantity the appendix paragraph quotes: the largest gap between the
+    three definitions' 2025 means for one group. `rank_changes` is the stricter test, because a
+    ranking can flip on a spread far too small to matter in level terms.
+    """
+    if grouping not in GROUPINGS:
+        raise ValueError(f'grouping must be one of {GROUPINGS}, got {grouping!r}')
     rows = []
     for ind in INDICATORS:
         block = table[table['indicator'] == ind]
-        pivot = block.pivot_table(index='region', columns='definition',
+        pivot = block.pivot_table(index=grouping, columns='definition',
                                   values=['rank_2025', 'value_2025', 'abs_change'])
-        for region in pivot.index:
-            ranks = {d: int(pivot[('rank_2025', d)][region]) for d in DEFINITIONS}
-            values = {d: float(pivot[('value_2025', d)][region]) for d in DEFINITIONS}
+        for group in pivot.index:
+            ranks = {d: int(pivot[('rank_2025', d)][group]) for d in DEFINITIONS}
+            values = {d: float(pivot[('value_2025', d)][group]) for d in DEFINITIONS}
             rows.append({
-                'indicator': ind, 'region': region,
+                'indicator': ind, grouping: group,
                 **{f'rank_{d}': ranks[d] for d in DEFINITIONS},
                 **{f'value_{d}': values[d] for d in DEFINITIONS},
                 'rank_changes': len(set(ranks.values())) > 1,
@@ -302,12 +323,32 @@ def main():
     print(f'common sample: {annual["gid_0"].nunique()} countries '
           f'({len(dropped)} dropped for incomplete coverage: {dropped[:8]}{"..." if len(dropped) > 8 else ""})')
 
+    # Sections A-B motivate the threshold, so they must not be subject to it; sections C onward are
+    # the robustness check, which is only like-for-like on country-years the definitions agree about
+    # (D43). The notebook splits exactly here, and main() did not — it ran the regional check on the
+    # unfiltered sample, so `ggi_comparison_rank_stability_*.csv` meant one thing when the script
+    # wrote it and another when the notebook did, under the same filename.
+    filtered, threshold_report = apply_threshold(annual)
+    print(f"  discrepancy filter (D43, cut {CFG['discrepancy_threshold']}): "
+          + ' | '.join(f"{r.indicator} {r.kept_pct:.1f}% kept, "
+                       f"{int(r.countries_lost_entirely)} countries lost"
+                       for r in threshold_report.itertuples()))
+
     scatter, scatter_stats = build_scatter(annual)
     diffs, diff_summary = build_differences(annual)
-    selection = select_trend_countries(annual)
-    trends = build_trends(annual, selection)
-    regional, regional_table = build_regional(annual)
+    selection = select_trend_countries(filtered)
+    trends = build_trends(filtered, selection)
+    # Both groupings on every run (D56's arrangement): the region tables keep their existing names
+    # and schema so nothing downstream moves, and the continent ones are stacked beside them under a
+    # `grouping` tag for the notebook to select.
+    regional, regional_table = build_regional(filtered)
     stability = rank_stability(regional_table)
+    by_grouping = []
+    for g in GROUPINGS:
+        _, tbl = build_regional(filtered, grouping=g)
+        st = rank_stability(tbl, grouping=g)
+        by_grouping.append(st.rename(columns={g: 'group'}).assign(grouping=g))
+    stability_by_grouping = pd.concat(by_grouping, ignore_index=True)
 
     outputs = {
         'scatter': scatter, 'scatter_stats': scatter_stats,
@@ -315,6 +356,8 @@ def main():
         'trend_selection': selection, 'trends': trends,
         'regional': regional, 'regional_table': regional_table,
         'rank_stability': stability,
+        'rank_stability_by_grouping': stability_by_grouping,
+        'threshold_report': threshold_report,
     }
     for name, frame in outputs.items():
         path = OUTDIR / f'{PREFIX}_{name}_{stamp}.csv'
@@ -324,8 +367,15 @@ def main():
     print()
     print(scatter_stats.round(4).to_string(index=False))
     print()
-    print('regional rank stability (2025):')
-    print(stability.round(4).to_string(index=False))
+    print('rank stability (2025), both groupings:')
+    for g in GROUPINGS:
+        blk = stability_by_grouping[stability_by_grouping['grouping'] == g]
+        print(f'\n  -- {g} --')
+        print(blk.round(4).to_string(index=False))
+        for ind in INDICATORS:
+            sub = blk[blk['indicator'] == ind]
+            print(f'  {ind}: max |spread across definitions| = {sub["max_value_spread"].max():.4f}'
+                  f'  |  ranking changes for {int(sub["rank_changes"].sum())} of {len(sub)} groups')
 
 
 

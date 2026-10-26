@@ -65,6 +65,25 @@ its existing output already sits.
 | `experimental_model_design.ipynb` | `15_experimental_model_design.ipynb` | The five-term experimental spec scored against production and swept. The result was that it is **worse** (E3–E5), so production is unchanged and the paper reports the production spec. |
 | `experimental_model_design_new_parameters.ipynb` | `16_experimental_model_design_new_parameters.ipynb` | Drops `gdp_pcap`, then sweeps all 46 development indicators as substitutes and additions. Concluded `gdp_pcap` is irreplaceable (E6); again, production unchanged. |
 
+## The coherent-GGI analysis (D57, 2026-10-26)
+
+The paper reports the **directly predicted** GGI; the coherent GGI (female level ÷ male level) and the
+analysis built on it are archived. Like the exploration notebooks these still **run**, and their
+`NOTEBOOK` constants are unchanged, so a re-run writes into the existing numbered `outputs/` folders.
+Run them from this folder: the two modules they import now live here too.
+
+**Not archived:** `src/coherent_ggi.py`. Its `coherent_ggi_country_year_<date>.csv` carries the
+direct GGI as well, and is the annual panel `convergence.py`, `model_performance.py` and
+`aggregation.py` read; `convergence.fixed_weights` also uses its `load_adult_population`.
+
+| File | Was | Archived because |
+| --- | --- | --- |
+| `coherent_ggi_figures.ipynb` | `analysis_notebooks/04_coherent_ggi_figures.ipynb` | The coherent series' figures. Its table output is still read by the active notebooks (above). |
+| `coherent_ggi_comparison.ipynb` | `analysis_notebooks/05_coherent_ggi_comparison.ipynb` | Coherent vs direct; set the 0.07 discrepancy threshold (D43), which stays in `params.COHERENT_GGI`. |
+| `coherent_ggi_decomposition.ipynb` | `analysis_notebooks/06_coherent_ggi_decomposition.ipynb` | The exact female/male decomposition of the coherent GGI's change (D24, D50, D55, D56). |
+| `ggi_comparison.py` | `src/ggi_comparison.py` | The module behind `coherent_ggi_comparison`; nothing active imports it. |
+| `ggi_decomposition.py` | `src/ggi_decomposition.py` | The module behind `coherent_ggi_decomposition`; nothing active imports it. |
+
 ## Superseded by a later analysis
 
 | File | Was | Retired because |
@@ -72,7 +91,7 @@ its existing output already sits.
 | `benchmark_model.py` | `03_benchmark_model.py` | OLS benchmarking across specifications. Input `{indicator}_aligned_final_*.csv` is gone (D5); the benchmark question was settled by the final specification (D12). |
 | `model_var_selection.py` | `04_model_var_selection.py` | Forward selection / LASSO over the candidate predictors. Input `combined_multiple_years_*_{year}-06.csv` is gone (D5); its output is the seven-term specification now in `params.FINAL_MODEL`. |
 | `feature_selection.qmd` | `05_feature_selection.qmd` | The R-side twin of the variable selection above, same fate. |
-| `coherent_ggi_figures_superseded.ipynb` | `09_coherent_ggi_figures.ipynb` | Superseded by `analysis_notebooks/04_coherent_ggi_figures.ipynb`. |
+| `coherent_ggi_figures_superseded.ipynb` | `09_coherent_ggi_figures.ipynb` | Superseded by `coherent_ggi_figures.ipynb` (below), itself archived since. |
 
 Leave-one-country-out validation for the surviving model now lives in `src/modelling.py`, driven by
 `analysis_notebooks/01_fit_final_models.ipynb`.

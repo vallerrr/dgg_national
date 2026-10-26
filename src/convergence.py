@@ -89,6 +89,19 @@ def load_panel(indicator, window=None, path=None):
     return panel.dropna(axis=0, how='any')
 
 
+def un_subregion():
+    """
+    UN M49 sub-region per iso3 ('Southern Asia', 'Sub-Saharan Africa', …), as a Series on `gid_0`
+
+    The UN scheme, not the World Bank one the `region` level carries. On the convergence panel the
+    two differ by one country: M49 puts Djibouti in Sub-Saharan Africa, the World Bank in the Middle
+    East. (M49's Southern Asia also includes Iran, which is not in the panel.) Read from the same
+    file `utils.mark_regions` uses.
+    """
+    m49 = pd.read_csv(params.RAW / 'definition_of_regions.csv', delimiter=';')
+    return m49.set_index('ISO-alpha3 Code')['Sub-region Name'].rename_axis('gid_0')
+
+
 def fixed_weights(year=None, index=None):
     """
     adult population at a single fixed year, as the weight series
@@ -407,6 +420,90 @@ def run(indicator, group=None, window=None):
         if 'indicator' not in frame.columns:
             frame.insert(0, 'indicator', indicator)
     return out
+
+
+def beta_latex(beta, weighting='unweighted', caption=None, label=None, decimals=3):
+    """
+    the beta-convergence table as a LaTeX `table`, in the manuscript's booktabs layout
+
+    Deliberately carries no significance stars. Every row in this table is p < 0.001, so a star
+    column separates nothing; worse, the tightest standard errors belong to the groups that are
+    almost entirely censored at the parity ceiling, where delta = 1 - initial holds identically and
+    beta is arithmetic rather than evidence (D47). Stars there would read as the strongest result on
+    the page. The `ceiling` column and the dagger carry that instead.
+
+    One weighting per table, named in the caption, because beta is not comparable across the two
+    (D49). `lambda` is left out: on a fully censored group it is not interpretable — mobile South
+    America returns 3.21/yr — and the two global rows are quoted in the notes instead.
+
+    Needs `booktabs` in the preamble and nothing else.
+    """
+    names = {'unweighted': 'unweighted', 'pop_weighted': 'population-weighted'}
+    if weighting not in names:
+        raise ValueError(f'weighting must be one of {sorted(names)}, got {weighting!r}')
+    # the censoring share the identification test used for THIS weighting, so the dagger always
+    # agrees with the number beside it (internet Oceania is 30% by country and 76% by population)
+    share_col = ('censored_share_end' if weighting == 'unweighted'
+                 else 'censored_share_end_popwt')
+    unit = 'countries' if weighting == 'unweighted' else 'population'
+
+    block = beta[beta['weighting'] == weighting]
+    indicators = [i for i in INDICATORS if i in set(block['indicator'])]
+    groups = list(dict.fromkeys(block['group']))
+    keyed = block.set_index(['indicator', 'group'])
+
+    start, end = CFG['window']
+    caption = caption or (f'Results of $\\beta$-convergence analysis by continent, {start}--{end} '
+                          f'({names[weighting]})')
+    label = label or f'tab:beta_convergence_{weighting}'
+
+    lines = [r'\begin{table}[!htbp]', r'\centering', f'\\caption{{{caption}}}',
+             f'\\label{{{label}}}',
+             r'\begin{tabular}{l' + 'rcr' * len(indicators) + '}', r'\toprule']
+    lines.append(' & ' + ' & '.join(f'\\multicolumn{{3}}{{c}}{{{i.capitalize()}}}'
+                                    for i in indicators) + r' \\')
+    lines.append(' '.join(f'\\cmidrule(lr){{{2 + 3 * k}-{4 + 3 * k}}}'
+                          for k in range(len(indicators))))
+    lines.append('Analysis Level & ' + ' & '.join(
+        [r'$n$ & $\beta$ (HC1 s.e.) & ceiling'] * len(indicators)) + r' \\')
+    lines.append(r'\midrule')
+
+    for group in groups:
+        cells = []
+        for indicator in indicators:
+            if (indicator, group) not in keyed.index:
+                cells += ['', '', '']
+                continue
+            r = keyed.loc[(indicator, group)]
+            # the dagger goes on the ESTIMATE, not on the row name: identification is per
+            # indicator, and Oceania is the case that proves it — internet Oceania is identified
+            # unweighted (30% of countries on the ceiling) while mobile Oceania is not (53%).
+            # A row-level flag would claim both were censored, or neither.
+            flag = '' if bool(r['identified']) else r'$^{\dagger}$'
+            cells += [f'{int(r["n"])}',
+                      f'{r["beta"]:.{decimals}f} ({r["se"]:.{decimals}f}){flag}',
+                      f'{100 * r[share_col]:.0f}\\%']
+        lines.append(f'{group} & ' + ' & '.join(cells) + r' \\')
+        if group == 'Global':
+            lines.append(r'\addlinespace')
+
+    lam = {i: keyed.loc[(i, 'Global'), 'lambda'] for i in indicators}
+    lam_text = ', '.join(f'{i} {lam[i]:.3f}/yr' for i in indicators)
+    lines += [r'\bottomrule', r'\end{tabular}',
+              r'\begin{flushleft}\footnotesize',
+              rf'\textit{{Notes:}} Dependent variable is the change in the directly predicted '
+              rf'gender gap index over {start}--{end}, regressed on its {start} level; '
+              rf'HC1 standard errors in parentheses. Estimates are {names[weighting]}. '
+              rf'\emph{{ceiling}} is the share of the group ({unit}) sitting at parity at the '
+              rf'endpoint.\\',
+              r'$^{\dagger}$ Not identified: the group is mostly censored at the parity ceiling, '
+              r'where $\Delta = 1 - \text{initial}$ holds by construction, so $\beta$ there is '
+              r'arithmetic rather than evidence and is reported for completeness only.\\',
+              rf'Implied annual speed of convergence at the global level: {lam_text}. '
+              rf'No significance stars are shown: every coefficient is $p<0.001$, and the smallest '
+              rf'standard errors belong to the least identified rows.',
+              r'\end{flushleft}', r'\end{table}']
+    return '\n'.join(lines) + '\n'
 
 
 def write(frames, stamp=None):

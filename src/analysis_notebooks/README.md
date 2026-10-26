@@ -4,9 +4,9 @@ Flat, numbered from `00` in run order. **The analysis lives here.** A notebook c
 `src/` to *build* its results, then visualises them — it does not read its own results back from a
 previous run.
 
-The one thing a notebook reads from disk is an **earlier stage's** output. Notebook 05 reads the
-coherent-GGI series that 04 built and the validation tables that 02 built; it builds its own
-comparison tables itself. Reading your own output back is how a figure ends up disagreeing with the
+The one thing a notebook reads from disk is an **earlier stage's** output. Notebook 08 reads the
+annual panel that the (now archived) coherent-GGI notebook built; it builds its own convergence
+tables itself. Reading your own output back is how a figure ends up disagreeing with the
 number beside it.
 
 Each notebook writes to a folder named after itself:
@@ -17,16 +17,19 @@ Each notebook writes to a folder named after itself:
 | --- | --- | --- | --- |
 | `00_data_creation.ipynb` | UN population panel | the R/Quarto survey chain | **runs** |
 | `01_fit_final_models.ipynb` | the six production models, LOCO, error betas | the fitting panel | **runs** |
-| `02_model_performance.ipynb` | LOCO for all ten variants, pickle verification, survey validation | 04's series | **runs** |
+| `02_model_performance.ipynb` | LOCO for all ten variants, pickle verification, survey validation, coverage and the 2025 prediction maps | 04's series | **runs** |
 | `03_unseen_survey_validation.ipynb` | figures on the 17 unseen surveys | 02 | **runs** |
-| `04_coherent_ggi_figures.ipynb` | the coherent GGI series and its figures | the golden series | **runs** |
-| `05_coherent_ggi_comparison.ipynb` | coherent-vs-direct tables and figures; **sets the 0.07 discrepancy threshold** (D43) | 04, 02 | **runs** |
-| `06_coherent_ggi_decomposition.ipynb` | the exact decomposition, on the filtered series (D43) | 04 | **runs** |
 | `07_aggregation_methods.ipynb` | the aggregation audit | 04 | **runs** |
-| `08_prediction_and_convergence.ipynb` | prediction maps, beta/sigma convergence — calls `convergence` | 04's annual panel | **runs** (D47, D48, D49) |
+| `08_prediction_and_convergence.ipynb` | beta/sigma convergence — calls `convergence`; continent trends, plus Southern Asia and Sub-Saharan Africa on the UN M49 definition; the maps moved to 02 | 04's annual panel | **runs** (D47, D48, D49, D57) |
 | `09_direct_ggi_trend_figures.ipynb` | the trend figures on the **directly predicted** GGI — `trend.qmd` ported, with its uncertainty ribbons and event annotations; national-vs-subnational; ground-truth coverage | the golden series, the subnational aggregate, the survey ground truth | **runs** (D51) |
 | `10`, `11` adolescent | a separate analysis line | — | not part of the national pipeline |
 | `12_specification_stability.ipynb` | `robustipy` sweep, each spec variable as the focal X; LOCO for all 127 distinct specs | the fitting panel | **runs** (D39, E1, E2) |
+
+The coherent-GGI analysis — `04_coherent_ggi_figures`, `05_coherent_ggi_comparison` and
+`06_coherent_ggi_decomposition` — was archived to `src/archive/` on 2026-10-26, prefixes dropped
+(D57). The numbers `04`–`06` are left as a gap rather than renumbered, so every `outputs/` folder and
+`doc/` reference keeps its name. **`04`'s output is still read**: `coherent_ggi_country_year_<date>.csv`
+is the annual panel 02, 03, 07 and 08 load, and `src/coherent_ggi.py`, which builds it, stays active.
 
 Four exploration notebooks were archived to `src/archive/` on 2026-08-31, prefixes dropped (D51):
 `12_s1_investigations`, `13_extended_panel_exploration`, `15_experimental_model_design` and

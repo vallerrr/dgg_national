@@ -26,8 +26,8 @@ currently *unconfirmed*. See [`doc/conventions.md`](doc/conventions.md) §7.
 │   ├── utils.py               shared helpers
 │   ├── plotting.py            the project's chart style
 │   ├── <topic>.py             the pipeline's functions — population, modelling,
-│   │                          model_performance, coherent_ggi, ggi_comparison,
-│   │                          ggi_decomposition, aggregation
+│   │                          model_performance, coherent_ggi, aggregation,
+│   │                          convergence
 │   ├── R_params.R, R_utils.R, run_qmd.R    the R twins of params/utils
 │   ├── data_creation/         the R / Quarto survey chain (00–04) and the predictor
 │   │                          updaters (05, 06)
@@ -90,9 +90,7 @@ from disk only what an *earlier* notebook produced. Each writes to `outputs/tabl
 | 01 | `01_fit_final_models.ipynb` | `modelling` |
 | 02 | `02_model_performance.ipynb` | `model_performance` |
 | 03 | `03_unseen_survey_validation.ipynb` | reads 02 |
-| 04 | `04_coherent_ggi_figures.ipynb` | `coherent_ggi` |
-| 05 | `05_coherent_ggi_comparison.ipynb` | `ggi_comparison` — **sets the 0.07 threshold** (D43) |
-| 06 | `06_coherent_ggi_decomposition.ipynb` | `ggi_decomposition` |
+| 04–06 | coherent GGI — **archived** to `src/archive/` (D57) | `coherent_ggi` still builds the annual panel |
 | 07 | `07_aggregation_methods.ipynb` | `aggregation` |
 | 08–12 | trend, adolescent, supplementary | imported analyses (D20) |
 | 13–16 | explorations | **nothing here changes a production artefact** (D39, E1–E6) |

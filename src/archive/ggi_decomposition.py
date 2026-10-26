@@ -29,7 +29,7 @@ categorisation in `GROUPINGS` — `continent` and the World Bank `region` — an
 each, tagged by a `grouping` column with the value in `group`. Choosing one is then a parameter in
 the notebook rather than a rerun of this script.
 
-    python src/ggi_decomposition.py
+    python src/archive/ggi_decomposition.py
 """
 from datetime import datetime
 

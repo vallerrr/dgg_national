@@ -5,7 +5,8 @@
 .Rproj.user
 .Rhistory
 
-# data/ and the generated outputs/ subdirs are symlinks into shared Dropbox (doc/decisions.md D1)
+# data/ and the generated outputs/ subdirs are symlinks into shared Dropbox
+# (doc/decisions_shared.md D1)
 /data/raw
 /data/processed
 /data/external
@@ -13,7 +14,12 @@
 /outputs/models
 /outputs/graphs
 
-# machine-generated run logs (§2: no README, not committed)
+# outputs/{fig,tables} are local, not committed: 82 MB of regenerable figures and
+# date-stamped CSVs. The notebook that wrote each one is its folder name.
+/outputs/fig
+/outputs/tables
+
+# machine-generated run logs (00_project_conventions.md §10: no README, not committed)
 /logs/*
 !/logs/.gitkeep
 
@@ -22,8 +28,12 @@
 **/figure-html/
 **/libs/
 *.html
-/outputs
-/outputs
+
+# credentials — the real file never enters a commit (§7)
+config/*.ini
+!config/*.ini.example
+/data
 /doc
 /doc
 /doc
+/data
